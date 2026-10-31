@@ -1,0 +1,171 @@
+# All 49 pairings: the belief update of Eqs. 5-6 as the authors' solver keeps them (2026-10-30), nothing automatic, a pick-up of three transitions, two posteriors by the hands, five hand actions, the hinderer without a goal of its own, inertia
+
+## What to run (2026-10-30): the belief update of the paper / the oracle
+
+The code is that of the package of 2026-10-21 with the belief update and the recursion
+rebuilt on 2026-10-30 after the paper and the authors' solver (README, "The belief update
+of 2026-10-30"): two posteriors about each robot -- its physical goal from its level-1
+hypothesis policies averaged over the social posterior (Eq. 6 as printed), in two stages by
+its hands; its social goal from its level-1 hypothesis policies averaged over the physical
+posterior (Eq. 5) -- the idle filter over both, Eq. 5's transition term for what the hands
+reveal, and nothing else. The lapse, the carry and park tables, the "outcome" observation
+and the belief temperature of before are gone, and so are their flags
+(`--inference-temperature`, `--partner-observed`): the belief is updated with Eq. 7's tau,
+of the action the partner chose. `--temperature TAU` sets Eq. 7's tau (default 0.2, in
+moves' costs; the 49 of 2026-10-26 ran at 0.15). `--physical-likelihood level0` runs the
+physical posterior on the partner's level-0 policies instead, as the authors' code does
+(folders `..._eq56l0`; the README says why Eq. 6 as printed is the default). From this
+folder, after `pip install -r requirements.txt`:
+
+    sh run_all_49.sh             # one process, the 49 one after the other
+    sh run_all_49_parallel.sh    # 7 processes at once, one per agent_1 goal (a many-core server)
+    TAU=0.15 sh run_all_49_parallel.sh   # ... at tau 0.15
+    TAU=0.15 PHYS=level0 sh run_all_49_parallel.sh   # ... with the authors' level-0 estimator
+
+The 49 pairings are the seven social goals of agent_1 by the seven of agent_2: cooperation,
+conflict, competition, coercion, exchange, none (physical goal only), hinder -- every
+ordered pair, `run_all_49.sh` lists them. Both write to
+
+    output/object_inference_two_w1_1_selective_level2_levels2_2_swap_steal_carry1_spoiler_inertia1_hands5_staged_byhand_pick3x2_hand2_eq56/
+
+(`..._tau0.15_...` with TAU=0.15) and keep what is saved there (`--resume`): run the same
+script again after an interruption. Every folder now ends in `_eq56`, so that no record of
+the folders of before, made with the devices of then, is kept. `run_all_49_parallel.sh`
+takes WORKERS (default 7) and THREADS (default: the CPUs / WORKERS); each process needs
+about 2.5 GB at its peak, so 7 at once need about 18 GB. It compiles the kernels once on
+the tiny scene first (logs/warmup.log), writes one log per worker (logs/worker_<goal>.log),
+and ends with one pass over all 49 that writes results.md, results.png and summary.json
+(logs/all49.log). Both scripts take PYTHON (default python3).
+
+Tests: `python -m pytest social_pairings/tests/test_beliefs.py` (the update against the
+equations, under a minute) and `python -m pytest social_pairings/tests/test_models.py`
+(every array the decisions rest on against brute force; about 5 min per test on two cores,
+so run it on the server: `python -m pytest -n 8 social_pairings/tests/test_models.py` with
+pytest-xdist, or `SOCIAL_PAIRINGS_SLOW=1` for the slow ones too). Of the rest of the suite,
+the mechanics (`test_hands`, `test_goals`, `test_hindrance`, `test_spoiler`, the figure)
+pass; the tests that pin the course of a rollout made under the belief devices of before
+were re-pinned to the courses of now where the run was looked at (`test_render`,
+`test_objects`, `test_defaults`); those not yet looked at, to re-pin or retire on the
+server, are `test_explicit.Rollouts.test_a_hinderer_lifts_the_object_it_guards`,
+`test_inertia.Rollouts.test_greedy`, and whatever `test_pairing`, `test_hinder` and `test_competition` (the six-object rollouts
+under TOLD) show -- they were still running when the package was made.
+(`test_values.Record.test_the_file_and_the_videos` failed in the cloud container on the
+duration ffmpeg reports, half a second short with every frame there; the untouched 10-21
+package fails it there too.)
+
+## Two spare objects: `run_spare2.sh` (2026-10-30, late)
+
+One pairing on the two-room scene as it is plus two spare objects, one per room, on (2, 1)
+and (6, 5) (`--scene spare2`), at the 49's settings (levels 2 / 2, every object inferred,
+swaps and taking, the pick-up of three transitions at two moves' worth, carry 1, inertia 1,
+tau 0.15). Four objects make 5,545 object configurations (4.35 million joint states) and
+24 physical goals per robot: about 170-190 GiB of solver memory, 23 GiB of it the dynamics
+tables. Time: a transition of the variant without swaps and with an instant pick-up (126
+configurations) took 390-420 s on 2 cores in the cloud container (763 s the first, solved
+cold); this model has 44 times its states, so about 4-5 h a transition on 2 cores, some
+20-30 min on 32 cores -- a day for 60 transitions. There is no checkpoint inside a rollout,
+so run it under tmux or nohup; `STEPS=30` halves it, `SWAP=0` drops the swaps (718
+configurations, about 24 GiB, about 8 times faster). Not a machine for two at once.
+
+    sh run_spare2.sh                         # hinder (agent_1) vs coercion (agent_2)
+    PAIR="coercion hinder" sh run_spare2.sh  # the other way round
+    MEM=200 THREADS=32 sh run_spare2.sh      # memory cap (GiB; default 90 % of the machine) and threads
+    SWAP=0 sh run_spare2.sh                  # without swaps: ~24 GiB, ~8x faster
+
+It prints a line per transition as it happens (`--verbose`; logs/spare2_<pair>.log), writes
+the record and the three videos to
+`output/object_inference_spare2_w1_1_selective_level2_levels2_2_swap_steal_tau0.15_carry1_spoiler_inertia1_hands5_staged_byhand_pick3x2_hand2_eq56/`,
+and `--resume`s. A machine with too little memory is told within minutes, before the big
+arrays, how much the model needs. (Without swaps the same scene is 718 configurations and
+about 24 GiB; without swaps and with an instant pick-up, 126 and about 4 GiB.)
+
+## The package of 2026-10-21: the pick-up at two moves
+
+The code is that of the package of 2026-10-18; this one adds two scripts that run the 49
+pairings with the settings in use since 2026-10-18 evening -- the pick-up costing two moves'
+worth on its first transition (`--pick-cost 2`) instead of the default three.
+
+## The package of 2026-10-18
+
+Package of 2026-10-18: nothing is automatic any more -- a robot picks its own
+object up by "pick" and sets it down, finishing, by "place", like any other object; a
+pick-up takes three transitions, the robot lifting meanwhile with "pick" its one action,
+and costs three moves' worth on the first; place, take, give and swap cost two moves' worth
+(the user, 2026-10-18; "Nothing automatic" in the README). The rule of before is
+`--automatic-hands`. Every folder now ends in `_byhand`; `--resume` keeps no record of the
+folders of before, which were made under the rule of before. The package of 2026-10-17,
+late, fixed a stop of the whole run when a robot's value video had a term in some steps and
+not in others; that fix is in this one.
+
+Since the evening of 2026-10-17 every rollout writes three MP4 videos (no GIFs): the
+annotated animation, agent_1 green and agent_2 red, and one video per robot of its value at
+every cell it could stand on, term by term (its own goal, its action costs, each social
+term), with its action at each cell -- "The value videos" in the README. Since 2026-10-17 a
+robot keeps two posteriors about its partner, by the partner's hands:
+while the partner holds nothing, what it does is evidence about which object it wants (and
+its social goal) and none about its destination; while it holds an object, about its
+destination (and its social goal) and none about its object, whose belief stays where the
+pick-up left it. The robot plans with the belief so built. Since 2026-10-16 a robot has ten
+actions: four moves, stay, and five hand actions -- pick, place, take, give, swap -- each
+with its own Q value and its own probability in the softmax (Eq. 7), where it had one action
+for its hands, "use". The README in `social_pairings/` has both ("Two posteriors, by the
+partner's hands"; "Five hand actions in place of "use"", with which rollouts of the tests
+changed and why a robot may expect its partner to get stuck in its plans).
+
+Set up once (Python 3.10 or newer; tested with 3.13):
+
+    pip install -r requirements.txt      # now also imageio-ffmpeg, which brings its own ffmpeg
+
+Then, from this folder (the one holding `social_pairings/` and `examples/`), one line:
+
+    python examples/run_object_inference.py --scene two --all-pairings --levels 2 2 --objects inferred --swap --steal --foreign-carry-cost 1 --inertia 1 --resume
+
+(with the pick-up at two moves, what the two scripts run: add `--pick-cost 2`; the folder
+then ends in `_byhand_pick3x2_hand2`)
+
+It writes everything to
+
+    output/object_inference_two_w1_1_selective_level2_levels2_2_swap_steal_carry1_spoiler_inertia1_hands5_staged_byhand_eq56/
+
+- `<agent_1>__<agent_2>__inferred.json` (the record), `.mp4` (the animation) and
+  `__inferred__values_agent_1.mp4` / `_agent_2.mp4` (the value videos) for each of the 49
+  pairings, as each one finishes
+- `results.md`, `results.png`, `summary.json`: the table of all 49, at the end
+
+`--resume` skips the pairings already saved, so after an interruption the same line carries
+on where it stopped. It never picks up a record of the package of 2026-10-14 (folders
+without `_hands5`, robots with "use"): it stops with a message instead; the folders of the
+packages of 2026-10-16 and -17 (`_hands5`, `_hands5_staged`: the automatic hands) are
+simply other folders. `--automatic-hands` gives the rule of before 2026-10-18 and the
+folder without `_byhand`; `--pick-steps`, `--pick-cost` and `--hand-cost` change the
+pick-up's length and the costs (and the suffix); `--one-posterior` gives the update of
+before 2026-10-17. `--threads N` caps the CPU threads (default: all of them). numba
+compiles on the first run (a minute or two).
+
+Settings in that line: two-room scene, both robots at level 2, each infers the other's
+object, destination and social goal; swaps on a place and taking from hands allowed;
+carrying the partner's object costs an ordinary move; 60 steps at most; `--inertia 1`: a robot does not undo its
+last action (step back, place what it just picked up, give back what it just took, ...)
+unless undoing beats every other action by more than one move's cost. Two settings are the
+package's defaults and need no flag: the hinderer has no goal of its own
+(`--hinder-own-goal` restores the old one), and competition is read as a rival.
+
+Time and memory: about 21 to 30 s a transition on 2 cores, 2 s of it for the value maps
+(the five pairings of 2026-10-18: 652 s for 31 transitions, 1766 s for 60; then a minute
+for the three videos). Pairings that run to the 60-step cap take 25 to 40 minutes; all 49
+should take roughly 12 to 18 hours on 2 cores. Memory: 1.8 GB resident measured on the
+two-room scene (2.6 x the object configurations of before, which the tables grow with);
+plan on 2.5 GB per run. `--no-video` skips the videos; the records hold everything they
+need, and the same line run again with `--resume` draws the videos of the records that
+have none.
+
+Faster on a many-core machine (what `run_all_49_parallel.sh` does, by hand): 8 pairings at a
+time with 4 threads each, then one pass that only reads the 49 saved runs and writes the table
+(no rerun, no re-render):
+
+    F="--scene two --levels 2 2 --objects inferred --swap --steal --foreign-carry-cost 1 --inertia 1 --pick-cost 2 --resume"
+    G="cooperation conflict competition coercion exchange none hinder"; for a in $G; do for b in $G; do echo $a $b; done; done | xargs -P 8 -L 1 sh -c "python examples/run_object_inference.py $F --threads 4 --pairing \$0 \$1"
+    python examples/run_object_inference.py $F --all-pairings
+
+Tests: `python -m pytest social_pairings/tests` (long; `SOCIAL_PAIRINGS_SLOW=1` adds the
+slow ones).

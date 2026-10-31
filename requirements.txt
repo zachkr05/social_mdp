@@ -1,0 +1,8 @@
+# tested with Python 3.13.16, numpy 2.5.3, numba 0.68.0, scipy 1.18.1, matplotlib 3.11.2,
+# pillow 12.3.0, imageio-ffmpeg 0.6.0 (pytest for the tests)
+numpy
+numba
+scipy
+matplotlib
+pillow
+imageio-ffmpeg
