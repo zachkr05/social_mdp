@@ -16,6 +16,15 @@ The 49 at every pair of taus, and the figures that put them side by side:
     TAUS1="0.2" TAUS2="0.1 0.3 0.5" sh run_tau_grid.sh    # agent_1 fixed, agent_2 swept
     GOALS="competition coercion" sh run_tau_grid.sh       # those goals' 4 pairings only
 
+0.1 to 0.6 in steps of 0.05 (eleven taus):
+
+    T="0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.55 0.6"
+    SAME=1 TAUS="$T" sh run_tau_grid.sh    # both robots at the same tau: 11 x 49 = 539 rollouts, ~5 h on 64 cores
+    TAUS="$T" sh run_tau_grid.sh           # every pair, each robot its own: 121 x 49 = 5929, ~2.5 days on 64 cores
+
+With `SAME=1` the figures have the tau as one axis (each pairing a row of cells, the counts a
+line per robot).
+
 One folder per pair of taus under `output/` (`..._tau0.2_0.5_...`; where the two are equal,
 `..._tau0.2_...`, the folder of `TAU=0.2`), then `output/tau_grid/`: `tau_grid.png` (every
 pairing as a small grid, agent_1's tau up and agent_2's across, each cell split: the

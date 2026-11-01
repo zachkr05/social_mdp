@@ -14,6 +14,9 @@ its ``summary.json`` written by a pass over its pairings).  Writes to --out:
 - ``tau_grid_counts.png``: per pair of taus, in how many pairings each robot finished;
 - ``pairings/<agent_1>__<agent_2>.png``: one pairing, with the transition each finished;
 - ``tau_grid.md``: the counts and every pairing's finishes as tables.
+
+Where every folder has one tau for both robots (``run_tau_grid.sh`` with SAME=1), the taus
+are one axis: each pairing is a row of cells over the tau, and the counts a line per robot.
 """
 from __future__ import annotations
 
@@ -75,6 +78,25 @@ def axes_of(rows) -> tuple:
     return goals_1, goals_2, taus_1, taus_2
 
 
+class Layout:
+    """What the figures put on their axes: the pairings, and the taus -- a grid of agent_1's
+    (rows of a panel) by agent_2's (columns), or, where every rollout had one tau for both
+    robots, one row over that tau."""
+
+    def __init__(self, rows) -> None:
+        self.goals_1, self.goals_2, taus_1, taus_2 = axes_of(rows)
+        self.same = all(r["tau_1"] == r["tau_2"] for r in rows)
+        self.ys = [None] if self.same else taus_1
+        self.xs = sorted(set(taus_1) | set(taus_2)) if self.same else taus_2
+        self.by = {(r["agent_1"], r["agent_2"], r["tau_1"], r["tau_2"]): r for r in rows}
+
+    def get(self, a: str, b: str, y, x):
+        return self.by.get((a, b, x, x) if self.same else (a, b, y, x))
+
+    def has(self, a: str, b: str) -> bool:
+        return any(k[:2] == (a, b) for k in self.by)
+
+
 def when(done, has_goal: bool) -> str:
     return "no goal" if not has_goal else ("–" if done is None else str(done))
 
@@ -94,38 +116,54 @@ def write_tables(rows, out: Path) -> None:
                              "" if r["done_2"] is None else r["done_2"],
                              int(r["goal_1"]), int(r["goal_2"]), r["steps"], r["stopped_by"],
                              r["folder"]])
-    by = {(r["agent_1"], r["agent_2"], r["tau_1"], r["tau_2"]): r for r in rows}
-    lines = ["# The pairings at every pair of taus", "",
-             f"Scene {rows[0]['scene']}; agent_1's tau down, agent_2's across.  Each robot reads "
-             "its partner at its own tau (Config.robot_temperatures).", "",
+    lay = Layout(rows)
+
+    def counts(here) -> tuple:
+        a = sum(r["done_1"] is not None for r in here)
+        b = sum(r["done_2"] is not None for r in here)
+        both = sum(r["done_1"] is not None and r["done_2"] is not None for r in here)
+        return a, b, both
+
+    lines = ["# The pairings at every pair of taus" if not lay.same else
+             "# The pairings at every tau, both robots at it", "",
+             f"Scene {rows[0]['scene']}.  Each robot reads its partner at its own tau "
+             "(Config.robot_temperatures)"
+             + ("; here both robots have the same." if lay.same else
+                "; agent_1's tau down, agent_2's across."), "",
              "## In how many pairings each robot finished its own goal", "",
-             "agent_1 / agent_2 / both, of the pairings rolled out at that pair of taus "
-             "(a hinderer has no goal of its own and never finishes).", "",
-             "| agent_1's tau \\ agent_2's | " + " | ".join(f"{t:g}" for t in taus_2) + " |",
-             "|---|" + "---|" * len(taus_2)]
-    for t1 in taus_1:
-        cells = []
-        for t2 in taus_2:
-            here = [r for r in rows if r["tau_1"] == t1 and r["tau_2"] == t2]
-            a = sum(r["done_1"] is not None for r in here)
-            b = sum(r["done_2"] is not None for r in here)
-            both = sum(r["done_1"] is not None and r["done_2"] is not None for r in here)
-            cells.append(f"{a} / {b} / {both} of {len(here)}" if here else "")
-        lines.append(f"| {t1:g} | " + " | ".join(cells) + " |")
+             "agent_1 / agent_2 / both, of the pairings rolled out "
+             "(a hinderer has no goal of its own and never finishes).", ""]
+    if lay.same:
+        lines += ["| tau | agent_1 | agent_2 | both | rolled out |", "|---|---|---|---|---|"]
+        for t in lay.xs:
+            here = [r for r in rows if r["tau_1"] == t]
+            a, b, both = counts(here)
+            lines.append(f"| {t:g} | {a} | {b} | {both} | {len(here)} |")
+    else:
+        lines += ["| agent_1's tau \\ agent_2's | " + " | ".join(f"{t:g}" for t in lay.xs)
+                  + " |", "|---|" + "---|" * len(lay.xs)]
+        for t1 in lay.ys:
+            cells = []
+            for t2 in lay.xs:
+                here = [r for r in rows if r["tau_1"] == t1 and r["tau_2"] == t2]
+                a, b, both = counts(here)
+                cells.append(f"{a} / {b} / {both} of {len(here)}" if here else "")
+            lines.append(f"| {t1:g} | " + " | ".join(cells) + " |")
+    pairs = sorted({(r["tau_1"], r["tau_2"]) for r in rows})
     lines += ["", "## Every pairing", "",
               "The transition at which agent_1 / agent_2 finished its own goal (– never), by "
-              "agent_1's tau / agent_2's tau.", "",
-              "| pairing | " + " | ".join(f"{t1:g} / {t2:g}" for t1 in taus_1 for t2 in taus_2)
-              + " |", "|---|" + "---|" * (len(taus_1) * len(taus_2))]
-    for a in goals_1:
-        for b in goals_2:
+              + ("tau." if lay.same else "agent_1's tau / agent_2's tau."), "",
+              "| pairing | " + " | ".join(f"{t1:g}" if lay.same else f"{t1:g} / {t2:g}"
+                                         for t1, t2 in pairs)
+              + " |", "|---|" + "---|" * len(pairs)]
+    for a in lay.goals_1:
+        for b in lay.goals_2:
             cells = []
-            for t1 in taus_1:
-                for t2 in taus_2:
-                    r = by.get((a, b, t1, t2))
-                    cells.append("" if r is None else
-                                 f"{when(r['done_1'], r['goal_1'])} / "
-                                 f"{when(r['done_2'], r['goal_2'])}")
+            for t1, t2 in pairs:
+                r = lay.by.get((a, b, t1, t2))
+                cells.append("" if r is None else
+                             f"{when(r['done_1'], r['goal_1'])} / "
+                             f"{when(r['done_2'], r['goal_2'])}")
             if any(cells):
                 lines.append(f"| {a} / {b} | " + " | ".join(cells) + " |")
     lines += ["", "Folders read:", ""] + [f"- `{f}`" for f in dict.fromkeys(r["folder"]
@@ -200,15 +238,24 @@ def _legend(fig, y: float) -> None:
         x = x1 + 0.08 + char * len(text) + 0.35
 
 
-def _tau_axes(ax, taus_1, taus_2, fontsize: float, names: bool) -> None:
-    ax.set_xticks(np.arange(len(taus_2)) + 0.5)
-    ax.set_xticklabels([f"{t:g}" for t in taus_2], fontsize=fontsize, color=MUTED)
-    ax.set_yticks(np.arange(len(taus_1)) + 0.5)
-    ax.set_yticklabels([f"{t:g}" for t in taus_1], fontsize=fontsize, color=MUTED)
+def _tau_axes(ax, lay: Layout, fontsize: float, names: bool, thin: bool = False) -> None:
+    """Tick labels (thin: every other one where there are more than six) and axis names."""
+    def labels(taus):
+        step = 2 if (thin and len(taus) > 6) else 1
+        return [f"{t:g}" if k % step == 0 else "" for k, t in enumerate(taus)]
+    ax.set_xticks(np.arange(len(lay.xs)) + 0.5)
+    ax.set_xticklabels(labels(lay.xs), fontsize=fontsize, color=MUTED)
+    if lay.same:
+        ax.set_yticks([])
+    else:
+        ax.set_yticks(np.arange(len(lay.ys)) + 0.5)
+        ax.set_yticklabels(labels(lay.ys), fontsize=fontsize, color=MUTED)
     ax.tick_params(length=0, pad=2)
     if names:
-        ax.set_xlabel("agent_2's tau", fontsize=fontsize + 1, color=QUIET)
-        ax.set_ylabel("agent_1's tau", fontsize=fontsize + 1, color=QUIET)
+        ax.set_xlabel("tau (both robots)" if lay.same else "agent_2's tau",
+                      fontsize=fontsize + 1, color=QUIET)
+        if not lay.same:
+            ax.set_ylabel("agent_1's tau", fontsize=fontsize + 1, color=QUIET)
 
 
 def draw_grid(rows, out: Path) -> None:
@@ -216,48 +263,105 @@ def draw_grid(rows, out: Path) -> None:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    goals_1, goals_2, taus_1, taus_2 = axes_of(rows)
-    by = {(r["agent_1"], r["agent_2"], r["tau_1"], r["tau_2"]): r for r in rows}
-    n1, n2 = len(goals_1), len(goals_2)
-    side = 1.55
-    fig = plt.figure(figsize=(1.3 + side * n2, 1.6 + side * n1), dpi=150, facecolor=SURFACE)
-    left, bottom, width, height = 0.12, 0.10, 0.84, 0.80
-    for a_i, a in enumerate(goals_1):
-        for b_i, b in enumerate(goals_2):
-            w, h = width / n2, height / n1
-            ax = fig.add_axes([left + b_i * w + 0.06 * w, bottom + (n1 - 1 - a_i) * h + 0.06 * h,
-                               0.88 * w, 0.88 * h])
+    lay = Layout(rows)
+    n1, n2 = len(lay.goals_1), len(lay.goals_2)
+    # in inches: a panel per pairing, its cells square
+    panel_w = 2.4 if lay.same else 1.55
+    cell = panel_w / len(lay.xs)
+    panel_h = cell * len(lay.ys)
+    gap_x, gap_y = 0.22, (0.3 if lay.same else 0.25)
+    left = 1.25 if lay.same else 1.65
+    right, top, bottom = 0.3, 1.25, 1.1
+    W = left + n2 * panel_w + (n2 - 1) * gap_x + right
+    H = top + n1 * panel_h + (n1 - 1) * gap_y + bottom
+    fig = plt.figure(figsize=(W, H), dpi=150, facecolor=SURFACE)
+    label_x = left - (0.15 if lay.same else 0.6)
+    for a_i, a in enumerate(lay.goals_1):
+        y0 = bottom + (n1 - 1 - a_i) * (panel_h + gap_y)
+        fig.text(label_x / W, (y0 + panel_h / 2) / H, a, ha="right", va="center",
+                 fontsize=10, color=INK)
+        for b_i, b in enumerate(lay.goals_2):
+            x0 = left + b_i * (panel_w + gap_x)
+            ax = fig.add_axes([x0 / W, y0 / H, panel_w / W, panel_h / H])
             ax.set_facecolor(SURFACE)
-            ax.set_xlim(0, len(taus_2))
-            ax.set_ylim(0, len(taus_1))
-            ax.set_aspect("equal", adjustable="box")
+            ax.set_xlim(0, len(lay.xs))
+            ax.set_ylim(0, len(lay.ys))
             for side_ in ax.spines.values():
                 side_.set_visible(False)
-            for y, t1 in enumerate(taus_1):
-                for x, t2 in enumerate(taus_2):
-                    _cell(ax, x, y, by.get((a, b, t1, t2)), 0.06, False, 6)
-            corner = a_i == n1 - 1 and b_i == 0
-            if corner:
-                _tau_axes(ax, taus_1, taus_2, 6, True)
+            for y, t1 in enumerate(lay.ys):
+                for x, t2 in enumerate(lay.xs):
+                    _cell(ax, x, y, lay.get(a, b, t1, t2), 0.06, False, 6)
+            if a_i == n1 - 1 and b_i == 0:          # the taus on the corner panel only
+                _tau_axes(ax, lay, 6, True, thin=True)
             else:
                 ax.set_xticks([])
                 ax.set_yticks([])
-            if b_i == 0:
-                fig.text(left - 0.012 - (0.035 if corner else 0.0),
-                         bottom + (n1 - 0.5 - a_i) * h, a, ha="right", va="center",
-                         fontsize=10, color=INK)
             if a_i == 0:
-                fig.text(left + (b_i + 0.5) * w, bottom + height + 0.012, b, ha="center",
+                fig.text((x0 + panel_w / 2) / W, (H - top + 0.1) / H, b, ha="center",
                          va="bottom", fontsize=10, color=INK)
-    fig.text(left - 0.01, bottom + height + 0.012, "agent_1 \\ agent_2", ha="right",
+    fig.text(label_x / W, (H - top + 0.1) / H, "agent_1 \\ agent_2", ha="right",
              va="bottom", fontsize=9, color=MUTED)
-    fig.text(0.5, 0.975, f"{rows[0]['scene']}: who finished its own goal, by each robot's tau",
+    fig.text(0.5, (H - 0.25) / H,
+             f"{rows[0]['scene']}: who finished its own goal, "
+             + ("by the tau of both robots" if lay.same else "by each robot's tau"),
              ha="center", va="top", fontsize=13, color=INK)
-    fig.text(0.5, 0.947, "rows: agent_1's social goal; columns: agent_2's.  Inside each "
-             "pairing, agent_1's tau goes up and agent_2's across.", ha="center", va="top",
-             fontsize=9.5, color=QUIET)
-    _legend(fig, 0.025)
+    fig.text(0.5, (H - 0.55) / H,
+             "rows: agent_1's social goal; columns: agent_2's.  Inside each pairing, "
+             + ("the tau (both robots the same) goes across." if lay.same else
+                "agent_1's tau goes up and agent_2's across."),
+             ha="center", va="top", fontsize=9.5, color=QUIET)
+    _legend(fig, 0.12 / H)
     fig.savefig(out / "tau_grid.png", facecolor=SURFACE)
+    plt.close(fig)
+
+
+def draw_lines(rows, out: Path) -> None:
+    """One tau for both robots: in how many pairings each robot finished, a line per robot."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    lay = Layout(rows)
+    fig, ax = plt.subplots(figsize=(7.6, 4.3), dpi=150, facecolor=SURFACE)
+    ax.set_facecolor(SURFACE)
+    top, ends = 0, []
+    for i in (0, 1):
+        done, total = [], []
+        for t in lay.xs:
+            here = [r for r in rows if r["tau_1"] == t and r[f"goal_{i + 1}"]]
+            done.append(sum(r[f"done_{i + 1}"] is not None for r in here))
+            total.append(len(here))
+        top = max(top, max(total))
+        name = ("agent_1", "agent_2")[i]
+        ax.plot(lay.xs, done, color=ROBOT[i], linewidth=2, marker="o", markersize=6,
+                markeredgecolor=SURFACE, markeredgewidth=1.5, label=name, zorder=3)
+        ends.append(done[-1])
+    # the line ends named, pushed apart where they meet
+    apart = max(1.0, 0.06 * max(1, top))
+    shift = (0.0, 0.0) if abs(ends[0] - ends[1]) >= apart else (
+        (apart / 2, -apart / 2) if ends[0] >= ends[1] else (-apart / 2, apart / 2))
+    for i in (0, 1):
+        ax.text(lay.xs[-1], ends[i] + shift[i], f"  {('agent_1', 'agent_2')[i]}",
+                va="center", fontsize=9, color=QUIET)
+    ax.set_ylim(0, max(1, top) * 1.05)
+    ax.set_xlim(lay.xs[0] - 0.02, lay.xs[-1] + 0.06)
+    ax.set_xticks(lay.xs)
+    ax.set_xticklabels([f"{t:g}" for t in lay.xs], fontsize=8, color=MUTED)
+    ax.tick_params(axis="y", labelsize=8, labelcolor=MUTED, length=0)
+    ax.tick_params(axis="x", length=0)
+    ax.grid(axis="y", color=HAIRLINE, linewidth=0.8)
+    ax.set_axisbelow(True)
+    for name_, side_ in ax.spines.items():
+        side_.set_visible(name_ == "bottom")
+        side_.set_color(NOT_DONE)
+    ax.set_xlabel("tau (both robots)", fontsize=9, color=QUIET)
+    ax.set_ylabel(f"pairings in which it finished\n(of {top} where it has a goal)",
+                  fontsize=9, color=QUIET)
+    ax.legend(frameon=False, fontsize=9, labelcolor=QUIET, loc="lower left")
+    ax.set_title(f"{rows[0]['scene']}: each robot's finishes by the tau of both",
+                 fontsize=11, color=INK, pad=10)
+    fig.tight_layout()
+    fig.savefig(out / "tau_grid_counts.png", facecolor=SURFACE)
     plt.close(fig)
 
 
@@ -267,7 +371,11 @@ def draw_counts(rows, out: Path) -> None:
     import matplotlib.pyplot as plt
     from matplotlib.colors import LinearSegmentedColormap
 
-    _, _, taus_1, taus_2 = axes_of(rows)
+    lay = Layout(rows)
+    if lay.same:
+        draw_lines(rows, out)
+        return
+    taus_1, taus_2 = lay.ys, lay.xs
     fig, axes = plt.subplots(1, 2, figsize=(1.6 + 2 * (1.0 + 0.8 * len(taus_2)),
                                             1.9 + 0.8 * len(taus_1)), dpi=150,
                              facecolor=SURFACE)
@@ -298,7 +406,7 @@ def draw_counts(rows, out: Path) -> None:
             ax.axhline(k, color=SURFACE, linewidth=2)
         for side_ in ax.spines.values():
             side_.set_visible(False)
-        _tau_axes(ax, taus_1, taus_2, 8, True)
+        _tau_axes(ax, lay, 8, True)
         name = ("agent_1", "agent_2")[i]
         ax.set_title(f"pairings in which {name} finished its own goal\n(of {top} where it has "
                      "one)", fontsize=10, color=INK, pad=8)
@@ -315,25 +423,26 @@ def draw_pairings(rows, out: Path) -> None:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    goals_1, goals_2, taus_1, taus_2 = axes_of(rows)
-    by = {(r["agent_1"], r["agent_2"], r["tau_1"], r["tau_2"]): r for r in rows}
+    lay = Layout(rows)
     (out / "pairings").mkdir(exist_ok=True)
-    for a in goals_1:
-        for b in goals_2:
-            if not any(k[:2] == (a, b) for k in by):
+    side = 0.75 if lay.same else 0.9                 # a cell, inches
+    for a in lay.goals_1:
+        for b in lay.goals_2:
+            if not lay.has(a, b):
                 continue
-            fig, ax = plt.subplots(figsize=(1.6 + 0.9 * len(taus_2), 1.9 + 0.9 * len(taus_1)),
-                                   dpi=150, facecolor=SURFACE)
+            fig, ax = plt.subplots(figsize=(1.6 + side * len(lay.xs),
+                                            1.9 + side * len(lay.ys)), dpi=150,
+                                   facecolor=SURFACE)
             ax.set_facecolor(SURFACE)
-            ax.set_xlim(0, len(taus_2))
-            ax.set_ylim(0, len(taus_1))
+            ax.set_xlim(0, len(lay.xs))
+            ax.set_ylim(0, len(lay.ys))
             ax.set_aspect("equal")
             for side_ in ax.spines.values():
                 side_.set_visible(False)
-            for y, t1 in enumerate(taus_1):
-                for x, t2 in enumerate(taus_2):
-                    _cell(ax, x, y, by.get((a, b, t1, t2)), 0.04, True, 7.5)
-            _tau_axes(ax, taus_1, taus_2, 8, True)
+            for y, t1 in enumerate(lay.ys):
+                for x, t2 in enumerate(lay.xs):
+                    _cell(ax, x, y, lay.get(a, b, t1, t2), 0.04, True, 7.5)
+            _tau_axes(ax, lay, 8, True)
             ax.set_title(f"{a} (agent_1, blue) vs {b} (agent_2, orange)\ntransition each "
                          "finished its own goal (– never)", fontsize=9.5, color=INK, pad=8)
             fig.tight_layout()

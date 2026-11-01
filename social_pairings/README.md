@@ -196,7 +196,8 @@ half, the rest of the suite and `run_tau_grid.sh` itself had not been run when t
 handed over (2026-11-01; `tools/tau_grid.py`'s figures were drawn from made-up summaries).
 
 **The sweep.** `run_tau_grid.sh` runs the 49 pairings at every pair of taus, `TAUS1` x `TAUS2`
-(default 0.1 ... 0.5 each: 1225 rollouts), and `tools/tau_grid.py` puts them side by side:
+(default 0.1 ... 0.5 each: 1225 rollouts; `SAME=1`: only one tau for both robots, the 49 at each
+tau of `TAUS`), and `tools/tau_grid.py` puts them side by side:
 every pairing as a small grid over the two taus (`tau_grid.png`), each robot's finishes over
 both taus (`tau_grid_counts.png`), one figure per pairing with the transitions
 (`pairings/`), and the tables (`tau_grid.md`, `tau_grid.csv`). `RUN_ALL_49.md` has the lines.
