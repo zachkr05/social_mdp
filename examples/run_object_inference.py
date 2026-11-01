@@ -322,10 +322,12 @@ def main() -> None:
     parser.add_argument("--steal", action="store_true",
                         help="Config.steal: free hands take what the partner next to them "
                              "holds (since 2026-10-12)")
-    parser.add_argument("--temperature", type=float, metavar="TAU",
+    parser.add_argument("--temperature", type=float, nargs="+", metavar="TAU",
                         help="Config.temperature: tau of Eq. 7's softmax -- the policies a "
                              "robot predicts its partner by, and the likelihood of Eqs. 5-6 "
-                             "-- in units of the move cost (default 0.2)")
+                             "-- in units of the move cost (default 0.2).  Two values: a tau "
+                             "per robot, agent_1's then agent_2's (Config.robot_temperatures; "
+                             "folders _tau<agent_1's>_<agent_2's>)")
     parser.add_argument("--foreign-carry-cost", type=float, metavar="FACTOR",
                         help="Config.foreign_carry_cost: what a move costs, in moves, while a "
                              "robot holds an object that is not its own (default 2; 1 is the "
@@ -376,6 +378,11 @@ def main() -> None:
                              "the social posterior, Eq. 6 as the paper prints it.  level0: the "
                              "partner's level-0 policies, the authors' code (folders ..._eq56l0)")
     args = parser.parse_args()
+    taus = None if args.temperature is None else tuple(args.temperature)
+    if taus is not None and len(taus) not in (1, 2):
+        parser.error("--temperature takes one tau (both robots) or two (agent_1's, agent_2's)")
+    if taus is not None and len(taus) == 2 and taus[0] == taus[1]:
+        taus = taus[:1]                    # one tau for both: the folder and the record of one
     modes = tuple(m for m in MODES if m in args.objects) if args.objects else MODES
     levels = None if args.levels is None else tuple(args.levels)
     make, options = SCENES[args.scene]
@@ -402,8 +409,10 @@ def main() -> None:
         options = dict(options, inertia=inertia)
     if args.one_posterior:
         options = dict(options, belief_stages=False)
-    if args.temperature is not None:
-        options = dict(options, temperature=args.temperature)
+    if taus is not None and len(taus) == 1:
+        options = dict(options, temperature=taus[0])
+    elif taus is not None:                 # a tau per robot (2026-11-01)
+        options = dict(options, robot_temperatures=taus)
     if args.physical_likelihood is not None:
         options = dict(options, physical_likelihood=args.physical_likelihood)
     if args.max_memory_gib is not None:         # (not in the folder name: same model)
@@ -430,7 +439,7 @@ def main() -> None:
            + G.cooperation_tag(rule) + G.level_tag(level_free_level)
            + ("" if levels is None else f"_levels{levels[0]}_{levels[1]}")
            + ("_swap" if args.swap else "") + ("_steal" if args.steal else "")
-           + ("" if args.temperature is None else f"_tau{args.temperature:g}")
+           + ("" if taus is None else "_tau" + "_".join(f"{t:g}" for t in taus))
            + ("" if carry is None else f"_carry{carry:g}")
            + ("_spoiler" if spoiler else "")
            + ("" if inertia is None else f"_inertia{inertia:g}")
@@ -488,6 +497,8 @@ def main() -> None:
                                     + "".join(f"     {what}" for flag, what in
                                               ((cfg.swap_on_place, "swap"), (cfg.steal, "steal"))
                                               if flag)
+                                    + ("" if taus is None else "     tau "
+                                       + " / ".join(f"{t:g}" for t in taus))
                                     + ("" if carry is None else f"     carry {carry:g}")
                                     + ("     hinder: no own goal" if spoiler else "")
                                     + ("" if inertia is None else f"     inertia {inertia:g}")
@@ -502,6 +513,8 @@ def main() -> None:
              + "".join(f", {what}" for flag, what in ((args.swap, "swaps on a place"),
                                                      (args.steal, "taking from hands"))
                        if flag)
+             + ("" if taus is None else f", Eq. 7's tau {taus[0]:g}" if len(taus) == 1
+                else f", Eq. 7's tau {taus[0]:g} ({NAMES[0]}) / {taus[1]:g} ({NAMES[1]})")
              + ("" if carry is None else
                 f", a move with the partner's object costs {carry:g} x a move")
              + (", a hinderer without a goal of its own" if spoiler else "")

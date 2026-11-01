@@ -9,7 +9,7 @@ grid transition lasts ``dt = resolution / reference_step_m`` reference steps, so
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 
@@ -76,6 +76,7 @@ ADDED_FIELDS = dict(
     pick_cost_rate=1.0,            # 2026-10-18 (c(pick) was use_cost_rate, 1.0 in every record)
     child_conditioning=True,       # 2026-10-30 (the partner's estimate conditioned on the action)
     physical_likelihood="level0",  # 2026-10-30 (a record of before is never that of now anyway)
+    robot_temperatures=None,       # 2026-11-01 (until then one tau for both robots)
 )
 
 
@@ -139,6 +140,18 @@ class Config:
     # temperature * c(move); "absolute": tau = temperature in reward units
     temperature: float = 0.2
     temperature_unit: str = "move_cost"
+    # A tau per robot, (agent_1's, agent_2's), in the unit of ``temperature`` (2026-11-01; the
+    # user: "each agent to have its own tau").  Robot i's tau is how it reads its partner:
+    # the softmax it predicts the partner by (Eq. 7) and the likelihood of its belief update
+    # about the partner (Eqs. 5-6).  The robots know each other's, as they know the rest of
+    # the model: inside robot i's model the partner's level-1 models read robot i at the
+    # partner's tau (so every model of a robot is softmaxed at its partner's tau, and the
+    # posterior about it -- which robot i's model takes as the partner's belief about it --
+    # is updated at its partner's tau).  Under action_selection="sample" robot i draws its
+    # own actions at its own tau.  None: both robots at ``temperature``; two equal values
+    # are stored that way (``temperature`` = the value, this field None), so a record made
+    # with one tau for both is the same record whichever way it was asked for.
+    robot_temperatures: Optional[Tuple[float, float]] = None
     # (Until 2026-10-30 the belief update had a temperature of its own and could read a
     # blocked move as a wait: both are gone -- the likelihood of Eqs. 5-6 is Eq. 7's softmax
     # of the hypothesis model's Q at Eq. 7's tau, of the action the partner chose, as
@@ -453,6 +466,17 @@ class Config:
     debug_topk: int = 3
 
     def __post_init__(self) -> None:
+        if self.robot_temperatures is not None:
+            pair = self.robot_temperatures
+            if isinstance(pair, (str, bytes)) or not hasattr(pair, "__len__") or len(pair) != 2:
+                raise ValueError("robot_temperatures must be None or (agent_1's tau, agent_2's)")
+            pair = tuple(float(t) for t in pair)
+            if not all(np.isfinite(t) and t > 0.0 for t in pair):
+                raise ValueError("robot_temperatures must be positive and finite")
+            if pair[0] == pair[1]:           # one tau for both: stored as ``temperature``
+                object.__setattr__(self, "temperature", pair[0])
+                pair = None
+            object.__setattr__(self, "robot_temperatures", pair)
         positive = (self.resolution, self.reference_step_m, self.reward_rate,
                     self.reward_radius_m, self.move_cost_rate, self.wait_cost_rate,
                     self.temperature, self.value_tol, self.max_memory_gib)
@@ -568,9 +592,23 @@ class Config:
 
     @property
     def tau(self) -> float:
-        """Temperature of Eq. 7 in reward units."""
+        """Temperature of Eq. 7 in reward units, where both robots have the same
+        (``robot_temperatures`` None); with a tau per robot, :meth:`tau_of`."""
+        if self.robot_temperatures is not None:
+            raise ValueError("the robots have a tau each (robot_temperatures): use tau_of(i)")
+        return self.tau_of(0)
+
+    def temperature_of(self, i: int) -> float:
+        """Robot i's tau in the unit of ``temperature`` (robot 0 = agent_1)."""
+        if self.robot_temperatures is None:
+            return float(self.temperature)
+        return float(self.robot_temperatures[i])
+
+    def tau_of(self, i: int) -> float:
+        """Robot i's tau of Eq. 7 in reward units: how robot i reads its partner -- the
+        softmax it predicts the partner by and the likelihood of its belief update."""
         scale = float(self.costs[0]) if self.temperature_unit == "move_cost" else 1.0
-        return self.temperature * scale
+        return self.temperature_of(i) * scale
 
     @property
     def tau_inference(self) -> float:

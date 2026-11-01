@@ -156,6 +156,51 @@ The package is self-contained. It shares no code with `social_mdp/` in the same 
 experiment engine behind `run_experiment`, the ablation arms and the congruence scores): it does
 one thing, roll out a pairing of social goals and say what happened.
 
+## A tau per robot (2026-11-01)
+
+The user: "We want each agent to have its own tau so I should be able to run competitive at
+0.2 and coercion at 0.5 in the same scene."  `Config.robot_temperatures = (agent_1's tau,
+agent_2's)`, in the unit of `Config.temperature` (moves' costs); on the command line
+`--temperature 0.2 0.5` (one value: both robots, as before).
+
+**What a robot's tau is.** Eq. 7's $\tau$ is how a robot *reads* its partner: the softmax of
+the partner's models it predicts the partner by (Eq. 4's $\psi$), and the likelihood of its
+belief update about the partner (Eqs. 5-6, which take Eq. 7's policies). So robot $i$'s
+$\tau_i$ sets how sharp its predictions of the partner are and how fast its beliefs about the
+partner move: at 0.1 one move can make it nearly sure, at 0.5 it takes several. The robots
+themselves still act greedily (Algorithm 1's argmax; under `action_selection="sample"` robot
+$i$ draws at its own $\tau_i$).
+
+**The rule.** Every model *of* robot $o$ is softmaxed at its partner's tau, $\tau_{1-o}$,
+wherever it is used: when the partner predicts robot $o$ (its level-1 or level-2 model), when
+the partner updates its belief about robot $o$, and inside robot $o$'s own level-2 model, where
+the partner's level-1 models read robot $o$ by robot $o$'s level-0 policies. The robots know
+each other's tau, as they know the rest of each other's model: the belief that robot $o$'s
+model takes as its partner's belief about it is the partner's actual posterior, updated at
+the partner's tau. (`SocialMDP.taus`, `read_inv_tau`; `kernels.softmax_policies` takes one
+inverse temperature per robot.)
+
+Two equal taus are stored as one (`temperature` = the value, `robot_temperatures` None), so
+`--temperature 0.2 0.2` is the record and the folder of `--temperature 0.2`. The folders of
+two different taus end in `_tau<agent_1's>_<agent_2's>`; the video titles and the table's title
+name both. Records of before had one tau (`ADDED_FIELDS`).
+
+**Checked** (`tests/test_temperatures.py`): with taus (0.1, 0.6), each robot's level-0
+policies and the likelihood of its actions are exactly those of the one-tau engine at its
+partner's tau (and differ from its own); a sampled robot draws at its own tau; a rollout keeps
+both taus in its record; every array of levels 0-2 of competition against coercion, both at
+level 2 and everything inferred, against the brute-force reference (which softmaxes a model of
+robot $o$ at `tau_of(1 - o)`): at (0.1, 0.6) the largest deviations were level-1 psi 1.1e-5,
+level-2 Q 2.8e-5 (limits 2e-4, 2e-3). The test also runs the taus the other way round; that
+half, the rest of the suite and `run_tau_grid.sh` itself had not been run when the code was
+handed over (2026-11-01; `tools/tau_grid.py`'s figures were drawn from made-up summaries).
+
+**The sweep.** `run_tau_grid.sh` runs the 49 pairings at every pair of taus, `TAUS1` x `TAUS2`
+(default 0.1 ... 0.5 each: 1225 rollouts), and `tools/tau_grid.py` puts them side by side:
+every pairing as a small grid over the two taus (`tau_grid.png`), each robot's finishes over
+both taus (`tau_grid_counts.png`), one figure per pairing with the transitions
+(`pairings/`), and the tables (`tau_grid.md`, `tau_grid.csv`). `RUN_ALL_49.md` has the lines.
+
 ## The belief update of 2026-10-30: Eqs. 5-6 as the authors' solver keeps them
 
 The user, 2026-10-30, with the authors' CUDA solver

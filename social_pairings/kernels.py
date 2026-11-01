@@ -1161,7 +1161,8 @@ def softmax_policies(V, R, P, p_of, agent_of, var_of, svar_of, soc_of, fix_of, r
                      gamma, inv_tau, out):
     """Eq. 7 softmax policies of models rows[l] -> out[prow[l]] (S, 10) f32 on the items.
     valid (2, N, 5): each robot's own legal moves; busy (B, 2): the robot is lifting an
-    object there, and only "pick" is open to it."""
+    object there, and only "pick" is open to it.  inv_tau (2,): 1 / tau at which the models
+    of each robot are read (its partner's tau: ``SocialMDP.read_inv_tau``)."""
     NN = N * N
     for i in prange(it_m.shape[0]):
         lm = it_m[i]
@@ -1177,6 +1178,7 @@ def softmax_policies(V, R, P, p_of, agent_of, var_of, svar_of, soc_of, fix_of, r
         r_out = prow[lm]
         c = it_lo[i] // NN
         vo = valid[o]                        # (N, 5) this robot's own legal moves
+        beta = inv_tau[o]                    # robot o is read at its partner's tau
         q = np.empty(NA)
         for s in range(it_lo[i], it_hi[i]):
             pair = s - c * NN
@@ -1196,7 +1198,7 @@ def softmax_policies(V, R, P, p_of, agent_of, var_of, svar_of, soc_of, fix_of, r
             z = 0.0
             for ao in range(NA):
                 if q[ao] > -1.0e299:
-                    e = np.exp((q[ao] - mx) * inv_tau)
+                    e = np.exp((q[ao] - mx) * beta)
                     q[ao] = e
                     z += e
                 else:

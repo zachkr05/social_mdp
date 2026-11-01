@@ -316,7 +316,7 @@ def _transition(mdp: SocialMDP, run: _Run, t: int, n_steps: int, uniforms: np.nd
     """One transition of the rollout: choose, move, record.  -> (actions, next state, joint
     state index before, event for the belief update)."""
     w, goal_ids = mdp.w, mdp.goal_ids
-    gamma, tau = cfg.gamma, cfg.tau
+    gamma = cfg.gamma
     state = run.state
     s = w.sid(state)
     block = state[2]
@@ -333,7 +333,7 @@ def _transition(mdp: SocialMDP, run: _Run, t: int, n_steps: int, uniforms: np.nd
         qp = mdp.q_values(twin, s, i) if twin is not None else qi.copy()
         q.append(qi)
         q_phys.append(qp)
-        psi.append(np.exp(log_softmax(qi / tau)))
+        psi.append(np.exp(log_softmax(qi / cfg.tau_of(i))))   # at robot i's own tau
         flipped.append(twin is not None and argmax_action(qi) != argmax_action(qp))
         if twin is None:                 # expected immediate social reward of each action
             social_reward.append(np.zeros(N_ACTIONS))
@@ -735,6 +735,12 @@ def _result(mdp: SocialMDP, run: _Run, info0: dict, cfg: Config) -> dict:
                     joint_states=int(w.S), blocks_in_use=int(mdp.reachable.size)))
 
 
+def _taus(cfg: Config) -> str:
+    """Eq. 7's tau in reward units: one number, or agent_1's/agent_2's where they differ."""
+    a, b = cfg.tau_of(0), cfg.tau_of(1)
+    return f"{a:g}" if a == b else f"{a:g}/{b:g}"
+
+
 def _describe(mdp: SocialMDP, run: _Run, n_steps: int) -> list:
     w, cfg, goal_ids = mdp.w, mdp.cfg, mdp.goal_ids
     lines = [
@@ -745,7 +751,7 @@ def _describe(mdp: SocialMDP, run: _Run, n_steps: int) -> list:
         f"solver arrays <= {mdp.memory_bytes / 2 ** 30:.2f} GiB",
         f"gamma={cfg.gamma:.6f} rho={cfg.rho:.4f} c(move/stay/pick/hand)={cfg.costs[0]:.4f}/"
         f"{cfg.costs[WAIT]:.4f}/{cfg.pick_cost_rate * cfg.dt:.4f}/"
-        f"{cfg.use_cost_rate * cfg.dt:.4f} tau={cfg.tau:g} | hands="
+        f"{cfg.use_cost_rate * cfg.dt:.4f} tau={_taus(cfg)} | hands="
         f"{'automatic' if cfg.automatic_hands else f'by hand, pick in {cfg.pick_steps}'} | "
         f"execution={cfg.action_selection} | forced_swap={cfg.forced_swap} held_reward="
         f"{w.held_reward} idle_hypothesis={cfg.idle_hypothesis}",

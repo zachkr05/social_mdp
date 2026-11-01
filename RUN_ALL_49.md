@@ -1,5 +1,38 @@
 # All 49 pairings: the belief update of Eqs. 5-6 as the authors' solver keeps them (2026-10-30), nothing automatic, a pick-up of three transitions, two posteriors by the hands, five hand actions, the hinderer without a goal of its own, inertia
 
+## Each robot its own tau: `run_tau_grid.sh` (2026-11-01)
+
+Eq. 7's tau is now one per robot: robot i reads its partner at its own tau -- the softmax it
+predicts the partner by and the likelihood of its belief update -- and the robots know each
+other's (README, "A tau per robot"). One run, agent_1 at 0.2 and agent_2 at 0.5:
+
+    python examples/run_object_inference.py --scene two --levels 2 2 --objects inferred --swap --steal --foreign-carry-cost 1 --inertia 1 --pick-cost 2 --temperature 0.2 0.5 --resume --pairing competition coercion
+    TAU="0.2 0.5" sh run_all_49_parallel.sh     # the 49 at that pair of taus
+
+The 49 at every pair of taus, and the figures that put them side by side:
+
+    sh run_tau_grid.sh                                    # 0.1 ... 0.5 for each robot: 25 x 49 = 1225 rollouts
+    TAUS="0.1 0.2 0.3" sh run_tau_grid.sh                 # 9 x 49
+    TAUS1="0.2" TAUS2="0.1 0.3 0.5" sh run_tau_grid.sh    # agent_1 fixed, agent_2 swept
+    GOALS="competition coercion" sh run_tau_grid.sh       # those goals' 4 pairings only
+
+One folder per pair of taus under `output/` (`..._tau0.2_0.5_...`; where the two are equal,
+`..._tau0.2_...`, the folder of `TAU=0.2`), then `output/tau_grid/`: `tau_grid.png` (every
+pairing as a small grid, agent_1's tau up and agent_2's across, each cell split: the
+upper-left half blue where agent_1 finished its own goal, the lower-right half orange where
+agent_2 did), `tau_grid_counts.png` (in how many pairings each robot finished, over both
+taus), `pairings/<agent_1>__<agent_2>.png` (one pairing, with the transition each finished),
+`tau_grid.md` and `tau_grid.csv`. Logs in `logs/tau_grid/` (one per job, and `folders.txt`).
+
+Size and time: a rollout takes 10-40 min on 2 threads, the 49 of one pair of taus about 15 h
+of 2-thread work, so the default grid about 375 h: some 12 h with 32 workers (64 cores), 24 h
+with 16. WORKERS (default: the CPUs / THREADS) jobs run at once, THREADS (default 2) each, a
+new one as soon as one ends; each needs about 2.5 GB at its peak, so 32 workers need about
+80 GB. Records only by default (`NOVIDEO=0` draws the three videos of every rollout); to
+draw one pairing's afterwards, run its line above (`--resume` draws the videos of a record
+that has none, and rolls nothing out again). Interrupted? Run the same line again. Also
+takes PHYS, SCENE, STEPS, LOGS, OUT, PYTHON.
+
 ## What to run (2026-10-30): the belief update of the paper / the oracle
 
 The code is that of the package of 2026-10-21 with the belief update and the recursion

@@ -5,7 +5,7 @@ as the authors' solver (social-mdp-framework, ``main.cpp`` / ``smdp.cu``) struct
 
     Eq. 2    R_m(s, a_o, a_p) = r_o(s') - c(a_o) + xi_m(s, a_o, a_p)
     Eq. 3-4  Q_m(s, a_o) = sum_{a_p} P_m(a_p | s) [ R_m + gamma V_m(s') ],  V_m = max_a Q_m
-    Eq. 7    psi_m(a | s) = softmax_a( Q_m(s, a) / tau )
+    Eq. 7    psi_m(a | s) = softmax_a( Q_m(s, a) / tau_p )   (tau_p: the partner's, below)
     Eq. 6    b_g(g)   <- b_g(g)   psi^0_{p,g}(a_p | s)                       (physical goal)
     Eq. 5    b_xi(xi) <- b_xi(xi) sum_g b_g(g) psi^1_{p,(g,xi)}(a_p | s)      (social goal)
 
@@ -42,7 +42,15 @@ since 2026-10-30, in place of one joint posterior over (object, destination, soc
 Nothing else is in the update (the lapse, the carry and park tables, the "outcome"
 observation and the separate inference temperature of before are gone): the likelihood is
 Eq. 7's softmax of the hypothesis model's Q at the state, at Eq. 7's tau, of the action the
-partner chose.  The belief a robot's level-1 models (the hypotheses its partner plans
+partner chose.
+
+**A tau per robot** (``Config.robot_temperatures``, 2026-11-01): robot i reads its partner at
+its own tau, ``taus[i]`` -- the Eq. 7 policies it predicts the partner by and the likelihood
+of its update about the partner.  Every model of robot o is therefore softmaxed at its
+partner's tau, ``taus[1 - o]``, wherever it is used (the partner predicting robot o, the
+partner's update about robot o, and inside robot o's own level-2 model, the partner's
+level-1 models reading robot o): the robots know each other's tau.  One tau for both is the
+rule of before.  The belief a robot's level-1 models (the hypotheses its partner plans
 against) hold about the robot's partner is the same posterior ``about[.]``: the authors'
 estimators are shared between the acting robot and the models of it, the evidence being
 the same.
@@ -309,7 +317,12 @@ class SocialMDP:
         need = 6 * PG * w.B * w.nEv * 2                   # the dynamics tables alone
         if need > self.budget:
             raise SolverFailure(self._too_big(need, "its dynamics tables"))
-        self.gamma, self.tau = cfg.gamma, cfg.tau
+        self.gamma = cfg.gamma
+        # Eq. 7's tau per robot (Config.robot_temperatures): robot i reads its partner at
+        # taus[i], so every model OF robot o -- its policies, the likelihood of its actions --
+        # is softmaxed at its partner's tau, taus[1 - o] (read_inv_tau[o] = 1 / that)
+        self.taus = (cfg.tau_of(0), cfg.tau_of(1))
+        self.read_inv_tau = np.array([1.0 / self.taus[1], 1.0 / self.taus[0]])
         self.exchange_share = float(cfg.exchange_share)
         self.cost_in_partner_reward = 1.0 if cfg.social_cost else 0.0
         self.lead = G.lead_weight(cfg.competition)       # of the race term (goals.py)
@@ -649,7 +662,7 @@ class SocialMDP:
             it_m, it_lo, it_hi = (np.concatenate([p[k] for p in parts]) for k in range(3))
             softmax_policies(Vg, Rg, L0.P, sub.p_of, sub.agent, sub.var, sub.svar, sub.social,
                              sub.zero, loc, np.ascontiguousarray(grp), it_m, it_lo, it_hi,
-                             *self._kernel_args(L0), 1.0 / self.tau, L0.psi)
+                             *self._kernel_args(L0), self.read_inv_tau, L0.psi)
             L0.V[grp] = Vg
             del Rg, Vg
             t_psi += time.perf_counter() - tic
@@ -1013,7 +1026,7 @@ class SocialMDP:
             it_m, it_lo, it_hi = (np.concatenate([pt[k] for pt in parts]) for k in range(3))
             softmax_policies(bank.V, bank.R, bank.P, bank.p_of, bank.agent, bank.var, bank.svar,
                              bank.social, bank.zero, hyp, np.ascontiguousarray(bank.psi_row[hyp]),
-                             it_m, it_lo, it_hi, *self._kernel_args(bank), 1.0 / self.tau,
+                             it_m, it_lo, it_hi, *self._kernel_args(bank), self.read_inv_tau,
                              bank.psi)
         return rows
 
@@ -1095,8 +1108,8 @@ class SocialMDP:
 
     def execution_policy(self, i: int, state, q: np.ndarray) -> np.ndarray:
         """The distribution robot i draws from under ``action_selection="sample"``: Eq. 7's
-        softmax."""
-        return np.exp(log_softmax(q / self.tau))
+        softmax at robot i's own tau."""
+        return np.exp(log_softmax(q / self.taus[i]))
 
     # ---- beliefs: reading them ---------------------------------------------------------------
     def root_slot(self, i: int) -> Optional[BeliefSlot]:
@@ -1141,9 +1154,10 @@ class SocialMDP:
 
     # ---- beliefs: the likelihoods ------------------------------------------------------------
     def _log_policy(self, model: Tuple[int, int], s: int, robot: int) -> np.ndarray:
-        """(10,) log of Eq. 7's policy of ``model`` at joint state s: softmax(Q / tau), -inf
-        where illegal."""
-        return log_softmax(self.q_values(model, s, robot) / self.tau)
+        """(10,) log of Eq. 7's policy of ``model`` (a model of robot ``robot``) at joint
+        state s: softmax(Q / tau) at the tau robot ``robot`` is read at -- its partner's, the
+        robot whose belief this likelihood updates -- -inf where illegal."""
+        return log_softmax(self.q_values(model, s, robot) / self.taus[1 - robot])
 
     def physical_log_likelihood(self, j: int, s: int, a: int) -> np.ndarray:
         """(PG,) log psi^0_{j,g}(a | s) of robot j's level-0 model under each of its physical

@@ -12,11 +12,15 @@ branch `social-interactions`).
 - `examples/` -- `run_object_inference.py` (one or all pairings, records and videos) and the
   other experiment scripts.
 - `run_all_49.sh`, `run_all_49_parallel.sh` -- the 49 pairings at the standard settings;
+  `run_tau_grid.sh` -- the 49 at every pair of taus, each robot its own;
   `run_spare2.sh` -- one pairing with two spare objects (needs ~190 GiB). See `RUN_ALL_49.md`.
-- `tools/try_pairing.py` -- a pairing's beliefs, transition by transition.
+- `tools/try_pairing.py` -- a pairing's beliefs, transition by transition; `tools/tau_grid.py`
+  -- the tau grid's figures and tables.
 
 ```
 pip install -r requirements.txt
 python -m pytest social_pairings/tests/test_beliefs.py      # the belief update, < 1 min
 TAU=0.15 sh run_all_49_parallel.sh                           # the 49 pairings
+TAU="0.2 0.5" sh run_all_49_parallel.sh                      # ... agent_1 at tau 0.2, agent_2 at 0.5
+sh run_tau_grid.sh                                           # ... at every pair of taus 0.1-0.5
 ```

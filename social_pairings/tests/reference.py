@@ -871,9 +871,11 @@ class Brute:
             out[name] = v
         return out
 
-    def softmax(self, Q, legal) -> np.ndarray:
+    def softmax(self, Q, legal, o: int) -> np.ndarray:
+        """Eq. 7 of a model of robot o: at its partner's tau (``Config.robot_temperatures``:
+        each robot reads its partner at its own tau)."""
         with np.errstate(invalid="ignore", divide="ignore"):
-            z = Q / self.cfg.tau
+            z = Q / self.cfg.tau_of(1 - o)
             z = z - np.where(legal.any(axis=1, keepdims=True), z.max(axis=1, keepdims=True), 0.0)
             psi = np.where(legal, np.exp(z), 0.0)
             return psi / np.maximum(psi.sum(axis=1, keepdims=True), 1e-300)
@@ -931,7 +933,7 @@ class Brute:
                             for lst, v in zip(trip[a], (s, b2 * NN + n2, pp[ap])):
                                 lst.append(v)
         V, Q = self.solve(legal, R, const, trip, self._fixed(o, True))
-        psi = self.softmax(Q, legal)
+        psi = self.softmax(Q, legal, o)
         if cfg.partner_parks:                              # the predictions that are overridden
             hard = not cfg.idle_hypothesis
             for b in range(self.B):
@@ -1033,7 +1035,7 @@ class Brute:
         if extra is not None:
             extra.update(parts=parts, trip=trip, const=const)
         V, Q = self.solve(legal, R, const, trip, self._fixed(o, physical))
-        return V, Q, Pm, R, legal, self.softmax(Q, legal)
+        return V, Q, Pm, R, legal, self.softmax(Q, legal, o)
 
     # ---- level 2 -----------------------------------------------------------------------------
     def level2(self, o: int, g_own: int, term, hyps, bel_me, idle_me, psis_me, sigma: float,
