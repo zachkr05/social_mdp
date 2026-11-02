@@ -27,8 +27,23 @@
 # workers (64 cores), 24 h with 16.  Each worker needs about 2.5 GB at its peak.
 # SAME=1: only the pairs with one tau for both robots, (t, t) for each t of TAUS1 -- the 49 at
 # each tau (len(TAUS) x 49 rollouts; the figures then have the tau as one axis).
+#
+# Two decoy objects (2026-11-01): SCENE=spare2 is the same two rooms with a spare object in
+# each, nobody's goal, both candidates for the partner's object (run_spare2.sh).  With swaps
+# a rollout needs 170-190 GiB and about a day on 32 cores: too big for a grid.  SWAP=0 drops
+# the swaps (718 object configurations instead of 5,545): about 24 GiB a rollout and roughly
+# 8 times faster -- an estimate; time one first (SWAP=0 PAIR=... sh run_spare2.sh).  Give MEM
+# with it: the GiB a rollout may use (--max-memory-gib), from which the workers default to
+# 90 % of the machine's memory / MEM and the threads to the CPUs / workers:
+#
+#     SAME=1 TAUS="0.1 0.2 0.3" SCENE=spare2 SWAP=0 MEM=30 sh run_tau_grid.sh
+#
+# SWAP=0 changes the dynamics too, so the grid to compare it with is SCENE=two SWAP=0 (folders
+# without _swap), not the 49's.
 # Environment: TAUS1, TAUS2 (default TAUS, default "0.1 0.2 0.3 0.4 0.5"), SAME, GOALS (default
-# all seven), THREADS per worker (default 2), WORKERS (default: the CPUs / THREADS), PHYS
+# all seven), THREADS per worker (default 2), WORKERS (default: the CPUs / THREADS), SWAP
+# (default 1; 0: no swaps on a place, the folders then lack _swap), MEM (whole GiB a rollout may use;
+# sets the default WORKERS and THREADS by the machine's memory), PHYS
 # (Config.physical_likelihood), CONFLICT (Config.conflict: task, the default since 2026-11-01,
 # in folders ..._taskconflict that take every pairing without conflict from the folder of
 # before and roll out the conflict pairings alone; table, Table I's -w R_j), SCENE (default
@@ -41,14 +56,30 @@ TAUS=${TAUS:-0.1 0.2 0.3 0.4 0.5}
 TAUS1=${TAUS1:-$TAUS}
 TAUS2=${TAUS2:-$TAUS}
 GOALS=${GOALS:-cooperation conflict competition coercion exchange none hinder}
-FLAGS="--levels 2 2 --objects inferred --swap --steal --foreign-carry-cost 1 --inertia 1 --pick-cost 2"
+FLAGS="--levels 2 2 --objects inferred --steal --foreign-carry-cost 1 --inertia 1 --pick-cost 2"
+[ "${SWAP:-1}" = 1 ] && FLAGS="$FLAGS --swap"      # SWAP=0: no swaps on a place (folders without _swap)
 [ -n "$PHYS" ] && FLAGS="$FLAGS --physical-likelihood $PHYS"
 [ -n "$CONFLICT" ] && FLAGS="$FLAGS --conflict $CONFLICT"
+[ -n "$MEM" ] && FLAGS="$FLAGS --max-memory-gib $MEM"   # (not in the folder name: same model)
 EXTRA="--scene ${SCENE:-two} --steps ${STEPS:-60}"
 [ "${NOVIDEO:-1}" = 1 ] && EXTRA="$EXTRA --no-video"
 N=$($PY -c "import os; print(os.cpu_count() or 2)")
-THREADS=${THREADS:-2}
-WORKERS=${WORKERS:-$(( N / THREADS ))}
+if [ -n "$MEM" ]; then
+  # a rollout may use MEM GiB: as many workers as 90 % of the memory holds, the CPUs shared
+  RAM=$($PY -c "import os; print(int(os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES') / 2**30))")
+  FIT=$(( RAM * 9 / 10 / MEM ))
+  [ "$FIT" -lt 1 ] && FIT=1
+  [ "$FIT" -gt "$N" ] && FIT=$N
+  THREADS=${THREADS:-$(( N / FIT ))}
+  [ "$THREADS" -lt 1 ] && THREADS=1
+  W=$(( N / THREADS ))
+  [ "$W" -gt "$FIT" ] && W=$FIT
+  WORKERS=${WORKERS:-$W}
+  echo "memory: $RAM GiB, $MEM GiB a rollout: at most $FIT at once"
+else
+  THREADS=${THREADS:-2}
+  WORKERS=${WORKERS:-$(( N / THREADS ))}
+fi
 [ "$WORKERS" -lt 1 ] && WORKERS=1
 LOGS=${LOGS:-logs/tau_grid}
 mkdir -p "$LOGS"

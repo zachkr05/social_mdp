@@ -18,6 +18,25 @@ the same options without the suffix, where they exist.
 A folder of before that is missing a record, or that was made with other options, simply
 gives nothing to take: those pairings are rolled out. With `OUTPUT=...` nothing is taken.
 
+### Two decoy objects in the grid
+
+`SCENE=spare2` is the two rooms plus a spare object in each, nobody's goal, both candidates
+for the partner's object. With swaps (the 49's settings) a rollout needs 170-190 GiB and about
+a day on 32 cores, so a grid is out of reach. Without swaps (`SWAP=0`, 718 object
+configurations instead of 5,545) it needs about 24 GiB and should be roughly 8 times faster;
+that is an estimate, so time one rollout first:
+
+    SWAP=0 TAU=0.2 PAIR="conflict cooperation" MEM=30 sh run_spare2.sh     # one rollout, a line per transition with its time
+    SAME=1 TAUS="0.1 0.2 0.3" SCENE=spare2 SWAP=0 MEM=30 sh run_tau_grid.sh   # the 49 at three taus
+    SAME=1 TAUS="0.1 0.2 0.3" SCENE=two SWAP=0 sh run_tau_grid.sh             # ... and the same without the decoys
+
+`MEM` (whole GiB a rollout may use) sets the workers to 90 % of the machine's memory / `MEM`
+and the threads to the CPUs / workers. Without it the script starts a worker per two CPUs,
+sized for the 2.5 GB rollouts of the two-room scene, and with the decoys that runs out of
+memory. `SWAP=0` changes the dynamics as well, so compare the decoy grid with the
+`SCENE=two SWAP=0` grid, not with the 49's (whose folders have `_swap`). The record of the
+`run_spare2.sh` line is the grid's at that tau, kept by `--resume`.
+
 ## Each robot its own tau: `run_tau_grid.sh` (2026-11-01)
 
 Eq. 7's tau is now one per robot: robot i reads its partner at its own tau -- the softmax it
