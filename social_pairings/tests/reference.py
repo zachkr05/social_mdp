@@ -247,7 +247,8 @@ def level2_race(goal: str, weight: float = 1.0, competition: str = "race_then_hi
 
 
 def table_l2(goal: str, partner: str, same: bool, n: float, weight: float = 1.0,
-             competition: str = "table", cooperate_with=None, spoiler: bool = False) -> tuple:
+             competition: str = "table", cooperate_with=None, spoiler: bool = False,
+             conflict: str = "table") -> tuple:
     """(coefficient of R_j, of r(g_i), of r(g_j)) of a level-2 robot against a partner taken
     to have the social goal ``partner``.  ``hinder`` keeps its level-1 meaning, -r(g_j); a
     hinder partner is a conflict partner; a partner without a social goal is not a row of
@@ -258,9 +259,13 @@ def table_l2(goal: str, partner: str, same: bool, n: float, weight: float = 1.0,
     (:func:`level2_race`); asked for its cells all the same, it is given the hostile
     table's.  ``cooperate_with`` (``Config.cooperate_with``, names; None: everybody): a
     cooperator has its cell only against a partner named there -- a hinder partner by that
-    name, not as a conflict partner -- and nothing at all against any other."""
+    name, not as a conflict partner -- and nothing at all against any other.
+    ``conflict="task"`` (``Config.conflict``): a conflict robot keeps the column l = 1,
+    -r(g_j), against every partner -- no R_j."""
     if goal == "none":
         return (0.0, 0.0, 0.0)
+    if goal == "conflict" and conflict == "task":
+        return (0.0, 0.0, -weight + 0.0)
     if goal == "no goal":                # the twin of a hinderer without a goal of its own:
         return (0.0, -1.0, 0.0)          # its moves' costs, nothing else
     if goal == "cooperation" and cooperate_with is not None and partner not in cooperate_with:

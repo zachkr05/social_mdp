@@ -415,14 +415,17 @@ class SocialMDP:
         of the race term (:func:`social_pairings.goals.level2_term`).  A cell of Table I's
         column l > 1 (as printed, or with the competitor's cell against a cooperative
         partner turned) has c = 0; a competitor that races this partner -- under a race
-        form any partner, as a rival any partner but a cooperator -- has ``(0, 0, 0, w)``."""
+        form any partner, as a rival any partner but a cooperator -- has ``(0, 0, 0, w)``;
+        a conflict robot under ``Config.conflict="task"`` ``(0, 0, -w, 0)``: -w r(g_j)
+        against every partner, no R_j."""
         if goal == NO_GOAL_TWIN:         # the twin of a hinderer without a goal of its own
             return 0.0, -1.0, 0.0, 0.0
         return G.level2_term(goal, partner_goal, same, weight=self.weights[robot],
                              exchange_share=self.exchange_share,
                              competition=self.cfg.competition,
                              cooperate_with=self.cooperate_with,
-                             hinder_own_goal=self.cfg.hinder_own_goal)
+                             hinder_own_goal=self.cfg.hinder_own_goal,
+                             conflict=self.cfg.conflict)
 
     def _no_term(self, robot: int, goal: int) -> bool:
         """A level-2 robot whose social term vanishes against every hypothesis."""

@@ -156,6 +156,70 @@ The package is self-contained. It shares no code with `social_mdp/` in the same 
 experiment engine behind `run_experiment`, the ablation arms and the congruence scores): it does
 one thing, roll out a pairing of social goals and say what happened.
 
+## Task conflict (2026-11-01, evening)
+
+The user: "Ok lets implement this: Option 1: task conflict ... $R_{\text{conflict}} = r(g_i) -
+w\,r(\tilde g_j) - c(a_i)$". `Config.conflict = "task"` is the default; `"table"` is Table I
+as printed, the rule until then (`TOLD`; every record of before).
+
+**Why.** Table I's conflict above level 1 is $-\tilde R_j$, and $\tilde R_j$ holds the partner's
+own term about the robot. Against a cooperator that term is $+w_j\,r(\tilde g_i)$, so
+
+$$R_i = \bigl(1 - w_i w_j\,\tilde b(g_i)\bigr)\,r(g_i) - w_i\,r(\tilde g_j) - c(a_i) - \dots$$
+
+with $\tilde b(g_i)$ how sure the cooperator is of the robot's goal. At $w = 1$, once the
+cooperator knows that goal, finishing it is worth nothing to the conflict robot. In conflict
+/ cooperation (2026-11-01) it picked its object up and put it back down: the value chart of
+that step had "down" +1 physical and -9 social, the social part being the cooperator's term
+about it coming back with a minus sign.
+
+**The rule.** A conflict robot keeps the table's entry at l = 1 at every level, against every
+partner:
+
+$$R_i = r(g_i) - w_i\,r(\tilde g_j) - c(a_i), \qquad (\alpha, \beta, \nu) = (0, 0, -w_i).$$
+
+It does its own task and works against its partner's: against the partner's goal reward, not
+its whole reward. No $\tilde R_j$, so no term of the partner about the robot comes back into its
+reward, and its level says only whom it takes its partner to be, as for a hinderer
+(`goals.level_free`). Three things follow:
+
+- It is what Table I's recursion converges to when carried to every level: $U_i \propto
+  r(g_i) + w\,r(g_j)$ for every partner type.
+- It is the reward of the hinderer with a goal of its own (`hinder_own_goal=True`, the hinderer
+  until 2026-10-14). The hinderer of now has none: $-c(a_i) - w\,r(\tilde g_j)$. Conflict is "do
+  my task and spoil yours"; hinder is "spoil yours".
+- What it gives up: its term no longer depends on the partner's social goal. A helper and a
+  hostile partner are spoiled alike.
+
+**What changes.** Only a level-2 conflict robot's own reward. Its partner models it at level 1,
+where both readings are $-w\,r(\tilde g_j)$. So every pairing without a conflict robot at level
+2 is the same rollout under both readings, every Q value bit for bit (`goals.conflict_matters`).
+Of the 49, the 13 with conflict change. The record's term reads "conflict: w (-1 r(g_j)), the
+partner's goal reward, against every partner [task conflict ...]"; the titles say "conflict
+(task)".
+
+**Folders.** `run_object_inference.py --conflict task` (the default) writes to `..._taskconflict`;
+`--conflict table` to the folder without the suffix, as before. `--resume` in a
+`_taskconflict` folder takes every pairing without a level-2 conflict robot from the folder
+without the suffix, with its videos, where that record was made with the options asked for in
+every other field; it rolls out the conflict pairings alone. A record is kept in place on the
+same rule. The scripts take `CONFLICT=table`.
+
+**Checked** (`tests/test_conflict.py`): the term against every partner, by the engine and by
+the reference; every other goal's term untouched under every reading of competition; equal to
+the hinderer-with-own-goal's; the option, `TOLD`, the records of before; the levels; the record
+text and the labels; `--resume`'s rule and the copy from the folder of before, on made-up
+records. Every array of levels 0-2 against brute force with a level-2 conflict robot (weights
+1.5 / 2.0) facing a level-2 cooperator, everything inferred: passed (6 min on 2 cores). Four
+transitions on the 3 x 3 map under both readings: cooperation / hinder is the same rollout,
+every Q value bit for bit, and conflict / cooperation is not (passed, 27 s). Also run and
+passed when the code was handed over: `test_goals`, `test_spoiler.Terms`,
+`test_defaults.TheDefaults`, `test_render.HeadlineTests`, `test_temperatures.Option`, and the
+script on the 3 x 3 map (`--conflict table`, then the default with `--resume`: the
+cooperation / hinder record taken, byte for byte, conflict / cooperation rolled out). The
+rest of the suite was not run; under `TOLD` (`tests/told.py`, which most of it uses) the
+reading is `"table"` and the code path is the one of before.
+
 ## A tau per robot (2026-11-01)
 
 The user: "We want each agent to have its own tau so I should be able to run competitive at
@@ -3764,6 +3828,7 @@ every mix of levels ("Results").
 | option | default | why |
 |---|---|---|
 | `competition` | `"rival"` | "The model" above: a race against every partner but a cooperative one, against which it is the competitor of `"table_hostile"`; not told whom it faces, it weighs the two by its belief. `"race_then_hinder"` (the default until 2026-10-08): its own goal, and from then on against its partner; `"race"`: a competitor that stops once its goal is done; `"table"`: Table I as printed; `"table_hostile"`: Table I with $-\tilde R_j$ against a cooperative partner as well |
+| `conflict` | `"task"` | a level-2 conflict robot is paid $-w\,r(\tilde g_j)$, Table I's entry at l = 1, against every partner: $R_i = r(g_i) - w\,r(\tilde g_j) - c(a_i)$ ("Task conflict"; since 2026-11-01). `"table"`: $-w\,\tilde R_j$ as printed, the default until then (`TOLD`), under which the cooperator's term about the robot comes back into its reward and it may undo its own task |
 | `cooperate_with` | cooperation, competition, exchange (`COOPERATE_WITH`) | the partners against which a level-2 cooperator's cell of Table I, $+\tilde R_j$, holds; against any other it has no social term and minds its own goal, so that a hinderer's wish that it fail is not its own ("Whom a cooperator cooperates with"; since 2026-10-11). `"all"` (`EVERY_PARTNER`): the table as printed, the default until then (`TOLD`) |
 | `action_selection` | `"argmax"` | Algorithm 1 is greedy; line 4 above |
 | `forced_swap` | `False` | line 1 |

@@ -29,7 +29,10 @@
 # each tau (len(TAUS) x 49 rollouts; the figures then have the tau as one axis).
 # Environment: TAUS1, TAUS2 (default TAUS, default "0.1 0.2 0.3 0.4 0.5"), SAME, GOALS (default
 # all seven), THREADS per worker (default 2), WORKERS (default: the CPUs / THREADS), PHYS
-# (Config.physical_likelihood), SCENE (default two), STEPS (default 60), NOVIDEO (default 1:
+# (Config.physical_likelihood), CONFLICT (Config.conflict: task, the default since 2026-11-01,
+# in folders ..._taskconflict that take every pairing without conflict from the folder of
+# before and roll out the conflict pairings alone; table, Table I's -w R_j), SCENE (default
+# two), STEPS (default 60), NOVIDEO (default 1:
 # records only -- 1225 x 3 videos is a lot; NOVIDEO=0 draws them), LOGS (default
 # logs/tau_grid), OUT (default output/tau_grid), PYTHON (default python3).
 set -e
@@ -40,6 +43,7 @@ TAUS2=${TAUS2:-$TAUS}
 GOALS=${GOALS:-cooperation conflict competition coercion exchange none hinder}
 FLAGS="--levels 2 2 --objects inferred --swap --steal --foreign-carry-cost 1 --inertia 1 --pick-cost 2"
 [ -n "$PHYS" ] && FLAGS="$FLAGS --physical-likelihood $PHYS"
+[ -n "$CONFLICT" ] && FLAGS="$FLAGS --conflict $CONFLICT"
 EXTRA="--scene ${SCENE:-two} --steps ${STEPS:-60}"
 [ "${NOVIDEO:-1}" = 1 ] && EXTRA="$EXTRA --no-video"
 N=$($PY -c "import os; print(os.cpu_count() or 2)")

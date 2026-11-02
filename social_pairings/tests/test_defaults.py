@@ -92,7 +92,7 @@ class TheDefaults(unittest.TestCase):
         example scripts compares a record of before with the options asked for."""
         then = Config(physical_level=2, partner_object="known", cooperate_with="all",
                       level_free_level=1, hinder_own_goal=True, belief_stages=False,
-                      value_maps=False, physical_likelihood="level0")
+                      value_maps=False, physical_likelihood="level0", conflict="table")
         saved = to_json(dataclasses.asdict(then))
         # (a device of before, which Config no longer takes -- BELIEF_DEVICES; the records
         # of before were made with it)
@@ -104,7 +104,8 @@ class TheDefaults(unittest.TestCase):
                          {"physical_level", "partner_object", "cooperate_with",
                           "level_free_level", "hinder_own_goal", "belief_stages",
                           "value_maps", "automatic_hands", "pick_steps", "pick_cost_rate",
-                          "use_cost_rate", "child_conditioning", "physical_likelihood"})
+                          "use_cost_rate", "child_conditioning", "physical_likelihood",
+                          "conflict"})
         self.assertEqual(written_with(now), now)          # what a record holds is kept
 
     def test_the_models_a_level_2_robot_judges_its_partner_by(self):

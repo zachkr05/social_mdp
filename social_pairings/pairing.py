@@ -33,7 +33,10 @@ def default_levels(goals: Sequence, cfg: Optional[Config] = None,
 
     * ``hinder``;
     * ``competition`` in its race forms (``Config.competition="race_then_hinder"`` and
-      ``"race"``; the default reading, ``"rival"``, reasons at level 2 either way).
+      ``"race"``; the default reading, ``"rival"``, reasons at level 2 either way);
+    * ``conflict`` read as a task conflict (``Config.conflict="task"``, the default since
+      2026-11-01: ``-w r(g_j)`` at every level; as Table I prints it, ``"table"``, it holds
+      ``-R_j`` above level 1 and its default level is 2).
 
     Why 1 until then: Table I has two columns.  Terms in ``r(g_j)`` are its column l = 1, given to a
     robot that takes its partner to pursue its physical goal and nothing else; at level 1
@@ -57,7 +60,8 @@ def default_levels(goals: Sequence, cfg: Optional[Config] = None,
     cfg = Config() if cfg is None else cfg
     effective = _effective(goals, (1, 1), weights)
     return tuple(cfg.physical_level if goal == G.NONE
-                 else cfg.level_free_level if G.level_free(goal, competition=cfg.competition)
+                 else cfg.level_free_level if G.level_free(goal, competition=cfg.competition,
+                                                           conflict=cfg.conflict)
                  else 2
                  for goal in effective)
 
@@ -173,7 +177,8 @@ def run_pairing(scene: Scene, goals: Sequence, *, weights: Sequence[float] = (1.
                                       else None, competition=cfg.competition,
                                       exchange_level1=cfg.exchange_level1,
                                       cooperate_with=G.cooperation_partners(cfg.cooperate_with),
-                                      hinder_own_goal=cfg.hinder_own_goal)
+                                      hinder_own_goal=cfg.hinder_own_goal,
+                                      conflict=cfg.conflict)
                            for i in (0, 1)),
         config=asdict(cfg))
     result["scene"].update(name=scene.name, grid=np.isfinite(scene.grid).astype(int),

@@ -266,7 +266,7 @@ class ModelsAgainstBruteForce(unittest.TestCase):
                     if race(t) != 0.0:           # a racer has nothing of the column l > 1
                         return (0.0, 0.0, 0.0)
                     return table_l2(mine, hyp_names[t], same, cfg.exchange_share, weights[a],
-                                    cfg.competition, cfg.cooperate_with, spoiler)
+                                    cfg.competition, cfg.cooperate_with, spoiler, cfg.conflict)
 
                 physical = all(
                     race(t) == 0.0 and term(t, same) == (0.0, 0.0, 0.0)

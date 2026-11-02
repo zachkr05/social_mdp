@@ -48,7 +48,7 @@ import numpy as np
 
 from .constants import (ACTION_NAMES, GIVE, GONE, HELD0, HELD1, MOVE_OF, MOVES, N_ACTIONS,
                         PICK, WAIT)
-from .goals import COMPETITION_NAMES, SOCIAL_GOALS, cooperation_reading
+from .goals import COMPETITION_NAMES, CONFLICT_NAMES, SOCIAL_GOALS, cooperation_reading
 from .config import written_with
 from .serialize import action_names
 
@@ -486,17 +486,22 @@ class _Story:
         return "event" if arrived else "plain"
 
 
-def goal_label(goal, competition: Optional[str] = None, cooperate_with=None) -> str:
+def goal_label(goal, competition: Optional[str] = None, cooperate_with=None,
+               conflict: Optional[str] = None) -> str:
     """A social goal as a headline names it.  A competitor is named with the reading of
     competition it was run under (``Config.competition``), where that is known: the
     readings behave differently, and a figure should say which one it shows.  So is a
     cooperator that does not cooperate with every partner (``Config.cooperate_with``, where
-    known; a record without it was made with Table I's): "cooperation (selective)"."""
+    known; a record without it was made with Table I's): "cooperation (selective)"; and a
+    conflict robot by its reading (``Config.conflict``, where known; a record without it
+    was made with Table I's): "conflict (task)", "conflict (Table I)"."""
     if goal in (None, "none"):
         return "physical goal only"
     reading = COMPETITION_NAMES.get(competition)
     if goal == "competition" and reading:
         return f"competition ({reading})"
+    if goal == "conflict" and conflict in CONFLICT_NAMES:
+        return f"conflict ({CONFLICT_NAMES[conflict]})"
     if goal == "cooperation" and cooperate_with is not None:
         rule = cooperation_reading(cooperate_with)
         if rule != "Table I":
@@ -507,7 +512,8 @@ def goal_label(goal, competition: Optional[str] = None, cooperate_with=None) -> 
 def _title(result: dict, names: Sequence[str]) -> str:
     goals = result.get("goals") or result.get("social_goals") or ("none", "none")
     config = result.get("config") or {}
-    label = [goal_label(g, config.get("competition"), config.get("cooperate_with"))
+    label = [goal_label(g, config.get("competition"), config.get("cooperate_with"),
+                        config.get("conflict", "table") if config else None)
              for g in goals]
     weights = result.get("weights")
     tail = "" if weights is None or all(g in (None, "none") for g in goals) else (
@@ -1389,7 +1395,8 @@ class _ValueCanvas:
         goals = result.get("goals") or result.get("social_goals") or ("none", "none")
         config = result.get("config") or {}
         level = (result.get("levels_used") or result.get("levels") or (0, 0))[self.robot]
-        self.title = title or (f"{self.names[self.robot]} ({goal_label(goals[self.robot], config.get('competition'), config.get('cooperate_with'))}, level {level}): "  # noqa: E501
+        reading = config.get("conflict", "table") if config else None
+        self.title = title or (f"{self.names[self.robot]} ({goal_label(goals[self.robot], config.get('competition'), config.get('cooperate_with'), reading)}, level {level}): "  # noqa: E501
                                "the value of standing at each cell, and what it is made of")
         # the terms of every step: a term that pays nothing in a step is left out of that
         # step's maps (SocialMDP.value_components), so the set can change along the rollout --

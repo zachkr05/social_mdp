@@ -12,6 +12,9 @@
 # Interrupted? Run the same line again: --resume keeps the pairings already saved.
 # Environment: TAU (Eq. 7's tau, default 0.2; two values, TAU="0.2 0.5": agent_1's and
 # agent_2's, each robot reading its partner at its own -- run_tau_grid.sh sweeps both), PHYS (Config.physical_likelihood: level1 default, level0 the authors' estimator), THREADS (default 0 = every CPU), SCENE (default two), STEPS (default 60),
+# CONFLICT (Config.conflict: task, the default since 2026-11-01 -- a level-2 conflict robot
+# paid -w r(g_j) against every partner, folders ..._taskconflict, which take the record of
+# every pairing without conflict from the folder of before; table -- Table I's -w R_j),
 # OUTPUT (default: the folder named after the options, under output/), NOVIDEO=1 (records only),
 # PYTHON (default python3).
 set -e
@@ -19,6 +22,7 @@ PY=${PYTHON:-python3}
 FLAGS="--levels 2 2 --objects inferred --swap --steal --foreign-carry-cost 1 --inertia 1 --pick-cost 2"
 [ -n "$TAU" ] && FLAGS="$FLAGS --temperature $TAU"      # Eq. 7's tau (default 0.2), one or one per robot
 [ -n "$PHYS" ] && FLAGS="$FLAGS --physical-likelihood $PHYS"   # level1 (Eq. 6 as printed, default) or level0 (the authors' code)
+[ -n "$CONFLICT" ] && FLAGS="$FLAGS --conflict $CONFLICT"   # task (default) or table (Table I's -R_j)
 EXTRA="--scene ${SCENE:-two} --steps ${STEPS:-60}"
 [ -n "$OUTPUT" ] && EXTRA="$EXTRA --output $OUTPUT"
 [ "${NOVIDEO:-0}" = 1 ] && EXTRA="$EXTRA --no-video"

@@ -56,6 +56,30 @@ hinderer takes its partner to be: at level 1 a robot without social goal, at lev
 default since 2026-10-11, ``Config.level_free_level``) a robot with one of the social goals
 it holds possible -- so it can read a partner that picks its object up as one that helps.
 
+``conflict`` has two readings (``Config.conflict``).  "table" is the table as printed,
+``-r(g_j)`` at l = 1 and ``-R_j`` above it -- with the partner's own term inside ``R_j``.
+Against a partner that cooperates with the robot that term is ``+w_j r~(g_i)``, and
+
+    R_i = (1 - w_i w_j b~(g_i)) r(g_i) - w_i r(g_j) - c(a_i) - ...
+
+(``b~(g_i)``: how sure the partner is of the robot's goal): at w = 1 the robot's own goal is
+worth nothing to it once its partner knows it, and in conflict / cooperation of 2026-11-01
+it put its own object back down.  "task" (the default since 2026-11-01; the user: "Ok lets
+implement this: Option 1: task conflict") is the table's entry at l = 1 kept at every
+level, against every partner:
+
+    R_i = r(g_i) - w_i r(g_j) - c(a_i).
+
+The robot does its own task and works against its partner's -- against the partner's goal
+reward, not against its whole reward.  No ``R_j``, so no partner's term about the robot comes
+back into its own reward, and its level says only whom it takes its partner to be, as for a
+hinderer.  It is the fixed point of Table I's recursion carried to every level (``U_i`` in
+proportion to ``r(g_i) + w r(g_j)``), and the reward of a hinderer with a goal of its own
+(``hinder_own_goal=True``, the hinderer until 2026-10-14); the hinderer of now has none.
+What it gives up: its term no longer depends on its partner's social goal -- a helper and
+a hostile partner are spoiled alike.  Only a level-2 conflict robot's own reward changes:
+its partner models it at level 1, where both readings are ``-w r(g_j)``.
+
 ``competition`` has five readings (``Config.competition``).
 
 "table" is the table as printed.  Its entry at l = 1 is the conflict entry from the first
@@ -170,10 +194,11 @@ from typing import FrozenSet, Optional, Tuple
 
 __all__ = ["SOCIAL_GOALS", "NONE", "COOPERATION", "CONFLICT", "COMPETITION", "COERCION",
            "EXCHANGE", "HINDER", "COMPETITION_FORMS", "COMPETITION_NAMES", "COOPERATE_WITH",
-           "parse_goal", "goal_name", "races", "level_free", "lead_weight", "race_weight",
-           "level1_coefficients", "level1_term", "level2_coefficients", "level2_term",
-           "goal_sign", "describe", "cooperation_partners", "cooperation_reading",
-           "cooperation_tag", "level_tag"]
+           "CONFLICT_READINGS", "CONFLICT_NAMES", "parse_goal", "goal_name", "races",
+           "level_free", "lead_weight", "race_weight", "level1_coefficients", "level1_term",
+           "level2_coefficients", "level2_term", "goal_sign", "describe",
+           "cooperation_partners", "cooperation_reading", "cooperation_tag", "level_tag",
+           "conflict_matters"]
 
 SOCIAL_GOALS = ("none", "cooperation", "conflict", "competition", "coercion", "exchange",
                 "hinder")
@@ -192,6 +217,11 @@ _HELPERS = (COOPERATION,)
 # Config.cooperate_with (its default since 2026-10-11; every goal, "all", until then): the
 # partners whose reward R_j a level-2 cooperator takes on
 COOPERATE_WITH = ("cooperation", "competition", "exchange")
+# Config.conflict (its default since 2026-11-01: "task"; "table" until then): a conflict
+# robot above level 1 is paid -w r(g_j), the table's entry at l = 1, or -w R_j as printed
+CONFLICT_READINGS = ("task", "table")
+# ... and what a figure calls each of them
+CONFLICT_NAMES = {"task": "task", "table": "Table I"}
 
 _INDEX = {name: i for i, name in enumerate(SOCIAL_GOALS)}
 _ALIASES = {"cooperate": "cooperation", "cooperative": "cooperation", "help": "cooperation",
@@ -318,14 +348,26 @@ def races(goal: int, *, competition: str = "race_then_hinder",
                                            and int(partner_goal) in _HELPERS)
 
 
-def level_free(goal: int, *, competition: str = "race_then_hinder") -> bool:
+def level_free(goal: int, *, competition: str = "race_then_hinder",
+               conflict: str = "table") -> bool:
     """Is the social term of a robot with ``goal`` the same at every level -- on goal
     rewards alone, no partner reward ``R_j`` in it whoever the partner is?  ``hinder``,
-    and competition under the two race forms.  Such a robot reasons at
-    ``Config.level_free_level`` by default (``pairing.default_levels``): 2 since 2026-10-11,
-    like every robot with a social goal; 1 until then.  A rival's term is not: against a
-    cooperator it is ``-R_j``."""
-    return goal == HINDER or (goal == COMPETITION and competition in _RACE_FORMS)
+    competition under the two race forms, and conflict under ``conflict="task"``.  Such a
+    robot reasons at ``Config.level_free_level`` by default (``pairing.default_levels``): 2
+    since 2026-10-11, like every robot with a social goal; 1 until then.  A rival's term is
+    not: against a cooperator it is ``-R_j``."""
+    return (goal == HINDER or (goal == COMPETITION and competition in _RACE_FORMS)
+            or (goal == CONFLICT and conflict == "task"))
+
+
+def conflict_matters(goals, levels) -> bool:
+    """Does ``Config.conflict`` change a rollout of robots with these social goals (names
+    or indices) at these levels?  Only where a conflict robot reasons at level 2: its own
+    reward is the one that changes, and its partner models it at level 1, where both
+    readings are ``-w r(g_j)``.  A record of any other pairing holds under either reading
+    (the example scripts' ``--resume`` keeps it)."""
+    return any(parse_goal(goal) == CONFLICT and int(level) >= 2
+               for goal, level in zip(goals, levels))
 
 
 def lead_weight(competition: str) -> float:
@@ -379,13 +421,18 @@ def level2_coefficients(goal: int, partner_goal: int, same_destination: bool, *,
                         weight: float = 1.0, exchange_share: float = 0.0,
                         competition: str = "table",
                         cooperate_with: Optional[FrozenSet[int]] = None,
-                        hinder_own_goal: bool = True) -> Tuple[float, float, float]:
+                        hinder_own_goal: bool = True,
+                        conflict: str = "table") -> Tuple[float, float, float]:
     """``(alpha, beta, nu)`` of a level-2 social term ``xi = alpha R_j + beta r(g_i) + nu
     r(g_j)`` against a partner taken to have ``partner_goal``: Table I's column l > 1 times
     the robot's weight.  ``same_destination``: the partner's hypothesised destination is
     the robot's own (the table's "g_i = g_j").  A partner without a social goal is not a
     row of the table; it is read by the level-1 column (``R_j`` is then its physical
     reward).  A ``hinder`` partner counts as a conflict partner.
+
+    ``conflict`` (``Config.conflict``): "table", the table as printed -- a conflict robot's
+    cell is ``-R_j``; "task", the table's entry at l = 1 at every level -- ``(0, 0, -w)``,
+    ``-w r(g_j)`` against every partner.
 
     ``competition``: "table" is the table as printed.  "table_hostile" turns one cell of
     it: a competitor against a cooperative or exchanging partner, ``-R_j`` where the table
@@ -399,6 +446,8 @@ def level2_coefficients(goal: int, partner_goal: int, same_destination: bool, *,
     cooperator minds its own goal (``Config.cooperate_with``).  None: every partner, the
     table as printed.  It is asked of the partner's own goal, before a hinder partner is
     read as a conflict partner, so either may be left out alone."""
+    if goal == CONFLICT and conflict == "task":  # -w r(g_j), Table I's l = 1, at every level
+        return 0.0, 0.0, -weight + 0.0
     if (goal == COOPERATION and cooperate_with is not None
             and int(partner_goal) not in cooperate_with):
         return 0.0, 0.0, 0.0
@@ -413,7 +462,8 @@ def level2_coefficients(goal: int, partner_goal: int, same_destination: bool, *,
 def level2_term(goal: int, partner_goal: int, same_destination: bool, *, weight: float = 1.0,
                 exchange_share: float = 0.0, competition: str = "race_then_hinder",
                 cooperate_with: Optional[FrozenSet[int]] = None,
-                hinder_own_goal: bool = True) -> Tuple[float, float, float, float]:
+                hinder_own_goal: bool = True,
+                conflict: str = "table") -> Tuple[float, float, float, float]:
     """``(alpha, beta, nu, c)`` of the whole social term of a robot at level 2 against a
     partner taken to have ``partner_goal``,
 
@@ -423,13 +473,14 @@ def level2_term(goal: int, partner_goal: int, same_destination: bool, *, weight:
     two race forms whoever the partner is, under "rival" unless the partner is cooperative.
     Everything else is a cell of Table I's column l > 1 (:func:`level2_coefficients`) with
     ``c = 0`` -- a cooperator's only against the partners in ``cooperate_with`` (None:
-    every partner, the table as printed)."""
+    every partner, the table as printed), a conflict robot's under ``conflict="task"``
+    ``(0, 0, -w, 0)`` against every partner."""
     if races(goal, competition=competition, partner_goal=int(partner_goal)):
         return 0.0, 0.0, 0.0, weight + 0.0
     return level2_coefficients(goal, partner_goal, same_destination, weight=weight,
                                exchange_share=exchange_share, competition=competition,
                                cooperate_with=cooperate_with,
-                               hinder_own_goal=hinder_own_goal) + (0.0,)
+                               hinder_own_goal=hinder_own_goal, conflict=conflict) + (0.0,)
 
 
 def _table1(goal: int, t: int, same: bool, n: float, hostile: bool = False
@@ -462,16 +513,21 @@ def _table1(goal: int, t: int, same: bool, n: float, hostile: bool = False
 def describe(goal: int, level: int, partner_goal: Optional[int] = None, *,
              competition: str = "race_then_hinder", exchange_level1: str = "none",
              cooperate_with: Optional[FrozenSet[int]] = None,
-             hinder_own_goal: bool = True) -> str:
+             hinder_own_goal: bool = True, conflict: str = "table") -> str:
     """The social term of a goal in words, for logs and result records.  ``competition``:
     ``Config.competition``; ``exchange_level1``: ``Config.exchange_level1``;
     ``cooperate_with``: ``Config.cooperate_with`` as indices (None: every partner, the
-    table as printed).  ``partner_goal``: the partner's social goal where the robot knows
-    it, else None.  It matters above level 1, where Table I has a column per partner goal
-    -- and for a rival at level 1, which has to know whom it faces."""
+    table as printed); ``conflict``: ``Config.conflict``.  ``partner_goal``: the partner's
+    social goal where the robot knows it, else None.  It matters above level 1, where
+    Table I has a column per partner goal -- and for a rival at level 1, which has to know
+    whom it faces."""
     name = goal_name(goal)
     if goal == NONE or level == 0:
         return "no social term"
+    if goal == CONFLICT and conflict == "task" and level >= 2:
+        versus = "" if partner_goal is None else f" vs {goal_name(partner_goal)}"
+        return (f"conflict{versus}: w (-1 r(g_j)), the partner's goal reward, against every "
+                f"partner  [task conflict: Table I, l = 1, at every level]")
     if competition == "rival" and goal == COMPETITION:
         race = ("w (+r(g_i) once its own goal is done; until then -r(g_j) while its "
                 "partner's is)")

@@ -57,6 +57,8 @@ def read(folders) -> list:
         summary = json.loads(path.read_text())
         t1, t2 = taus_of(summary.get("options") or {})
         scene = (summary.get("scene") or {}).get("name", "")
+        # Config.conflict (since 2026-11-01; a folder of before: Table I's)
+        reading = (summary.get("options") or {}).get("conflict", "table")
         for r in summary["rows"]:
             if r.get("objects", "inferred") != "inferred":
                 continue
@@ -64,8 +66,20 @@ def read(folders) -> list:
             rows.append(dict(agent_1=r["pairing"][0], agent_2=r["pairing"][1], tau_1=t1,
                              tau_2=t2, done_1=r["done_at"][0], done_2=r["done_at"][1],
                              goal_1=bool(own[0]), goal_2=bool(own[1]), steps=r["steps"],
-                             stopped_by=r["stopped_by"], scene=scene, folder=str(folder)))
+                             stopped_by=r["stopped_by"], scene=scene, conflict=reading,
+                             folder=str(folder)))
     return rows
+
+
+def scene_of(rows) -> str:
+    """The scene, and the reading of conflict where a folder was made under the task
+    conflict of 2026-11-01 (Config.conflict; Table I's, the reading of before, is not
+    named)."""
+    readings = {r.get("conflict", "table") for r in rows}
+    if readings == {"table"}:
+        return rows[0]["scene"]
+    return rows[0]["scene"] + (", task conflict" if readings == {"task"}
+                               else ", task and Table I conflict mixed")
 
 
 def axes_of(rows) -> tuple:
@@ -126,7 +140,7 @@ def write_tables(rows, out: Path) -> None:
 
     lines = ["# The pairings at every pair of taus" if not lay.same else
              "# The pairings at every tau, both robots at it", "",
-             f"Scene {rows[0]['scene']}.  Each robot reads its partner at its own tau "
+             f"Scene {scene_of(rows)}.  Each robot reads its partner at its own tau "
              "(Config.robot_temperatures)"
              + ("; here both robots have the same." if lay.same else
                 "; agent_1's tau down, agent_2's across."), "",
@@ -302,7 +316,7 @@ def draw_grid(rows, out: Path) -> None:
     fig.text(label_x / W, (H - top + 0.1) / H, "agent_1 \\ agent_2", ha="right",
              va="bottom", fontsize=9, color=MUTED)
     fig.text(0.5, (H - 0.25) / H,
-             f"{rows[0]['scene']}: who finished its own goal, "
+             f"{scene_of(rows)}: who finished its own goal, "
              + ("by the tau of both robots" if lay.same else "by each robot's tau"),
              ha="center", va="top", fontsize=13, color=INK)
     fig.text(0.5, (H - 0.55) / H,
@@ -358,7 +372,7 @@ def draw_lines(rows, out: Path) -> None:
     ax.set_ylabel(f"pairings in which it finished\n(of {top} where it has a goal)",
                   fontsize=9, color=QUIET)
     ax.legend(frameon=False, fontsize=9, labelcolor=QUIET, loc="lower left")
-    ax.set_title(f"{rows[0]['scene']}: each robot's finishes by the tau of both",
+    ax.set_title(f"{scene_of(rows)}: each robot's finishes by the tau of both",
                  fontsize=11, color=INK, pad=10)
     fig.tight_layout()
     fig.savefig(out / "tau_grid_counts.png", facecolor=SURFACE)
@@ -410,7 +424,7 @@ def draw_counts(rows, out: Path) -> None:
         name = ("agent_1", "agent_2")[i]
         ax.set_title(f"pairings in which {name} finished its own goal\n(of {top} where it has "
                      "one)", fontsize=10, color=INK, pad=8)
-    fig.suptitle(f"{rows[0]['scene']}: each robot's finishes over both taus", fontsize=12,
+    fig.suptitle(f"{scene_of(rows)}: each robot's finishes over both taus", fontsize=12,
                  color=INK)
     fig.tight_layout(rect=(0, 0, 1, 0.93))
     fig.savefig(out / "tau_grid_counts.png", facecolor=SURFACE, bbox_inches="tight",

@@ -776,7 +776,7 @@ def _describe(mdp: SocialMDP, run: _Run, n_steps: int) -> list:
         term = G.describe(goal, mdp.levels[i], partner_goal, competition=cfg.competition,
                           exchange_level1=cfg.exchange_level1,
                           cooperate_with=G.cooperation_partners(cfg.cooperate_with),
-                          hinder_own_goal=cfg.hinder_own_goal)
+                          hinder_own_goal=cfg.hinder_own_goal, conflict=cfg.conflict)
         lines.append(
             f"R{i}: level {mdp.levels[i]}, weight {mdp.weights[i]:g}, {term}"
             f" | start {w.starts[i]}, object "
