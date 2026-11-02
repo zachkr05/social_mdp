@@ -1,0 +1,76 @@
+nohup: ignoring input
+tau grid: both robots at each tau of 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.55 0.6; 11 pairs of taus x 49 pairings = 539 rollouts; 32 workers x 2 threads; logs in logs/tau_grid
+FAILED: agent_1 at tau 0.2, agent_2 at 0.2, agent_1 competition (see logs/tau_grid/run_0.2_0.2_competition.log)
+FAILED: agent_1 at tau 0.25, agent_2 at 0.25, agent_1 hinder (see logs/tau_grid/run_0.25_0.25_hinder.log)
+FAILED: agent_1 at tau 0.15, agent_2 at 0.15, agent_1 none (see logs/tau_grid/run_0.15_0.15_none.log)
+FAILED: agent_1 at tau 0.3, agent_2 at 0.3, agent_1 exchange (see logs/tau_grid/run_0.3_0.3_exchange.log)
+FAILED: agent_1 at tau 0.3, agent_2 at 0.3, agent_1 hinder (see logs/tau_grid/run_0.3_0.3_hinder.log)
+FAILED: agent_1 at tau 0.35, agent_2 at 0.35, agent_1 cooperation (see logs/tau_grid/run_0.35_0.35_cooperation.log)
+FAILED: agent_1 at tau 0.35, agent_2 at 0.35, agent_1 conflict (see logs/tau_grid/run_0.35_0.35_conflict.log)
+FAILED: agent_1 at tau 0.35, agent_2 at 0.35, agent_1 coercion (see logs/tau_grid/run_0.35_0.35_coercion.log)
+FAILED: agent_1 at tau 0.35, agent_2 at 0.35, agent_1 competition (see logs/tau_grid/run_0.35_0.35_competition.log)
+FAILED: agent_1 at tau 0.35, agent_2 at 0.35, agent_1 exchange (see logs/tau_grid/run_0.35_0.35_exchange.log)
+FAILED: agent_1 at tau 0.35, agent_2 at 0.35, agent_1 none (see logs/tau_grid/run_0.35_0.35_none.log)
+FAILED: agent_1 at tau 0.25, agent_2 at 0.25, agent_1 coercion (see logs/tau_grid/run_0.25_0.25_coercion.log)
+FAILED: agent_1 at tau 0.1, agent_2 at 0.1, agent_1 hinder (see logs/tau_grid/run_0.1_0.1_hinder.log)
+FAILED: agent_1 at tau 0.15, agent_2 at 0.15, agent_1 exchange (see logs/tau_grid/run_0.15_0.15_exchange.log)
+FAILED: agent_1 at tau 0.15, agent_2 at 0.15, agent_1 hinder (see logs/tau_grid/run_0.15_0.15_hinder.log)
+FAILED: agent_1 at tau 0.4, agent_2 at 0.4, agent_1 conflict (see logs/tau_grid/run_0.4_0.4_conflict.log)
+FAILED: agent_1 at tau 0.4, agent_2 at 0.4, agent_1 competition (see logs/tau_grid/run_0.4_0.4_competition.log)
+FAILED: agent_1 at tau 0.4, agent_2 at 0.4, agent_1 coercion (see logs/tau_grid/run_0.4_0.4_coercion.log)
+FAILED: agent_1 at tau 0.1, agent_2 at 0.1, agent_1 none (see logs/tau_grid/run_0.1_0.1_none.log)
+FAILED: agent_1 at tau 0.2, agent_2 at 0.2, agent_1 coercion (see logs/tau_grid/run_0.2_0.2_coercion.log)
+FAILED: agent_1 at tau 0.3, agent_2 at 0.3, agent_1 none (see logs/tau_grid/run_0.3_0.3_none.log)
+FAILED: agent_1 at tau 0.3, agent_2 at 0.3, agent_1 cooperation (see logs/tau_grid/run_0.3_0.3_cooperation.log)
+FAILED: agent_1 at tau 0.4, agent_2 at 0.4, agent_1 cooperation (see logs/tau_grid/run_0.4_0.4_cooperation.log)
+FAILED: agent_1 at tau 0.15, agent_2 at 0.15, agent_1 coercion (see logs/tau_grid/run_0.15_0.15_coercion.log)
+FAILED: agent_1 at tau 0.45, agent_2 at 0.45, agent_1 conflict (see logs/tau_grid/run_0.45_0.45_conflict.log)
+FAILED: agent_1 at tau 0.4, agent_2 at 0.4, agent_1 none (see logs/tau_grid/run_0.4_0.4_none.log)
+FAILED: agent_1 at tau 0.45, agent_2 at 0.45, agent_1 competition (see logs/tau_grid/run_0.45_0.45_competition.log)
+FAILED: agent_1 at tau 0.45, agent_2 at 0.45, agent_1 coercion (see logs/tau_grid/run_0.45_0.45_coercion.log)
+FAILED: agent_1 at tau 0.5, agent_2 at 0.5, agent_1 exchange (see logs/tau_grid/run_0.5_0.5_exchange.log)
+FAILED: agent_1 at tau 0.5, agent_2 at 0.5, agent_1 coercion (see logs/tau_grid/run_0.5_0.5_coercion.log)
+FAILED: agent_1 at tau 0.45, agent_2 at 0.45, agent_1 exchange (see logs/tau_grid/run_0.45_0.45_exchange.log)
+FAILED: agent_1 at tau 0.5, agent_2 at 0.5, agent_1 cooperation (see logs/tau_grid/run_0.5_0.5_cooperation.log)
+FAILED: agent_1 at tau 0.5, agent_2 at 0.5, agent_1 hinder (see logs/tau_grid/run_0.5_0.5_hinder.log)
+FAILED: agent_1 at tau 0.55, agent_2 at 0.55, agent_1 conflict (see logs/tau_grid/run_0.55_0.55_conflict.log)
+FAILED: agent_1 at tau 0.55, agent_2 at 0.55, agent_1 cooperation (see logs/tau_grid/run_0.55_0.55_cooperation.log)
+FAILED: agent_1 at tau 0.35, agent_2 at 0.35, agent_1 hinder (see logs/tau_grid/run_0.35_0.35_hinder.log)
+FAILED: agent_1 at tau 0.6, agent_2 at 0.6, agent_1 cooperation (see logs/tau_grid/run_0.6_0.6_cooperation.log)
+FAILED: agent_1 at tau 0.55, agent_2 at 0.55, agent_1 competition (see logs/tau_grid/run_0.55_0.55_competition.log)
+FAILED: agent_1 at tau 0.55, agent_2 at 0.55, agent_1 none (see logs/tau_grid/run_0.55_0.55_none.log)
+FAILED: agent_1 at tau 0.4, agent_2 at 0.4, agent_1 exchange (see logs/tau_grid/run_0.4_0.4_exchange.log)
+FAILED: agent_1 at tau 0.5, agent_2 at 0.5, agent_1 conflict (see logs/tau_grid/run_0.5_0.5_conflict.log)
+FAILED: agent_1 at tau 0.55, agent_2 at 0.55, agent_1 hinder (see logs/tau_grid/run_0.55_0.55_hinder.log)
+FAILED: agent_1 at tau 0.6, agent_2 at 0.6, agent_1 hinder (see logs/tau_grid/run_0.6_0.6_hinder.log)
+FAILED: agent_1 at tau 0.6, agent_2 at 0.6, agent_1 conflict (see logs/tau_grid/run_0.6_0.6_conflict.log)
+FAILED: agent_1 at tau 0.6, agent_2 at 0.6, agent_1 competition (see logs/tau_grid/run_0.6_0.6_competition.log)
+done: agent_1 at tau 0.2, agent_2 at 0.2, agent_1 none
+done: agent_1 at tau 0.1, agent_2 at 0.1, agent_1 exchange
+done: agent_1 at tau 0.1, agent_2 at 0.1, agent_1 competition
+done: agent_1 at tau 0.1, agent_2 at 0.1, agent_1 cooperation
+done: agent_1 at tau 0.2, agent_2 at 0.2, agent_1 exchange
+done: agent_1 at tau 0.25, agent_2 at 0.25, agent_1 none
+done: agent_1 at tau 0.25, agent_2 at 0.25, agent_1 exchange
+done: agent_1 at tau 0.15, agent_2 at 0.15, agent_1 competition
+done: agent_1 at tau 0.25, agent_2 at 0.25, agent_1 competition
+done: agent_1 at tau 0.3, agent_2 at 0.3, agent_1 competition
+done: agent_1 at tau 0.1, agent_2 at 0.1, agent_1 coercion
+done: agent_1 at tau 0.6, agent_2 at 0.6, agent_1 none
+done: agent_1 at tau 0.6, agent_2 at 0.6, agent_1 coercion
+done: agent_1 at tau 0.5, agent_2 at 0.5, agent_1 competition
+done: agent_1 at tau 0.3, agent_2 at 0.3, agent_1 conflict
+done: agent_1 at tau 0.6, agent_2 at 0.6, agent_1 exchange
+done: agent_1 at tau 0.3, agent_2 at 0.3, agent_1 coercion
+done: agent_1 at tau 0.15, agent_2 at 0.15, agent_1 cooperation
+done: agent_1 at tau 0.55, agent_2 at 0.55, agent_1 exchange
+done: agent_1 at tau 0.45, agent_2 at 0.45, agent_1 cooperation
+done: agent_1 at tau 0.25, agent_2 at 0.25, agent_1 cooperation
+done: agent_1 at tau 0.25, agent_2 at 0.25, agent_1 conflict
+done: agent_1 at tau 0.55, agent_2 at 0.55, agent_1 coercion
+done: agent_1 at tau 0.2, agent_2 at 0.2, agent_1 cooperation
+done: agent_1 at tau 0.15, agent_2 at 0.15, agent_1 conflict
+done: agent_1 at tau 0.1, agent_2 at 0.1, agent_1 conflict
+done: agent_1 at tau 0.2, agent_2 at 0.2, agent_1 hinder
+done: agent_1 at tau 0.2, agent_2 at 0.2, agent_1 conflict
+done: agent_1 at tau 0.4, agent_2 at 0.4, agent_1 hinder
