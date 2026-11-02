@@ -1,0 +1,4 @@
+/p/risheq/scenesmith/.venv/lib/python3.11/site-packages/numba/np/ufunc/parallel.py:373: NumbaWarning: [1mThe TBB threading layer requires TBB version 2021 update 6 or later i.e., TBB_INTERFACE_VERSION >= 12060. Found TBB_INTERFACE_VERSION = 12050. The TBB threading layer is disabled.[0m
+  warnings.warn(problem)
+
+libgomp: Thread creation failed: Resource temporarily unavailable

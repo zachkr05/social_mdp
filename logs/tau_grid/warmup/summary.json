@@ -1,0 +1,149 @@
+{
+ "scene": {
+  "name": "tiny",
+  "grid": [
+   [
+    1,
+    1,
+    1
+   ],
+   [
+    1,
+    1,
+    1
+   ],
+   [
+    1,
+    1,
+    1
+   ]
+  ],
+  "starts": [
+   [
+    0,
+    1
+   ],
+   [
+    2,
+    1
+   ]
+  ],
+  "pickups": [
+   [
+    2,
+    2
+   ],
+   [
+    0,
+    0
+   ]
+  ],
+  "destinations": [
+   [
+    0,
+    2
+   ],
+   [
+    2,
+    0
+   ]
+  ],
+  "candidates": [
+   [
+    1,
+    0
+   ],
+   [
+    0,
+    2
+   ],
+   [
+    2,
+    0
+   ]
+  ],
+  "objects": [
+   [
+    2,
+    2
+   ],
+   [
+    0,
+    0
+   ]
+  ],
+  "handoff_cells": [],
+  "rooms": null
+ },
+ "options": {
+  "resolution": 1.0,
+  "swap_on_place": true,
+  "steal": true,
+  "foreign_carry_cost": 1.0,
+  "inertia": 1.0,
+  "robot_temperatures": [
+   0.2,
+   0.3
+  ],
+  "pick_cost_rate": 2.0
+ },
+ "weights": [
+  1.0,
+  1.0
+ ],
+ "levels": [
+  2,
+  2
+ ],
+ "rows": [
+  {
+   "pairing": [
+    "none",
+    "none"
+   ],
+   "objects": "inferred",
+   "done_at": [
+    null,
+    null
+   ],
+   "own_goal": [
+    true,
+    true
+   ],
+   "steps": 2,
+   "stopped_by": "cap",
+   "levels_used": [
+    2,
+    2
+   ],
+   "believes_partners_object": [
+    1.0,
+    1.0
+   ],
+   "believes_partners_destination": [
+    0.333,
+    0.333
+   ],
+   "believes_social": [
+    [
+     "coercion",
+     0.192
+    ],
+    [
+     "coercion",
+     0.208
+    ]
+   ],
+   "set_downs_in_vain": [
+    0,
+    0
+   ],
+   "hand_overs_in_vain": [
+    0,
+    0
+   ],
+   "took_others_object": [],
+   "wall_time_s": 51.4
+  }
+ ]
+}

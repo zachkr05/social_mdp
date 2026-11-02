@@ -1,0 +1,164 @@
+OpenBLAS blas_thread_init: pthread_create failed for thread 8 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 9 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 10 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 11 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 12 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 13 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 14 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 15 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 16 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 17 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 18 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 19 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 20 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 21 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 22 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 23 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 24 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 25 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 26 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 27 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 28 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 29 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 30 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 31 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 32 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 33 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 34 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 35 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 36 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 37 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 38 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 39 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 40 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 41 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 42 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 43 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 44 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 45 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 46 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 47 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 48 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 49 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 50 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 51 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 52 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 53 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 54 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 55 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 56 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 57 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 58 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 59 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 60 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 61 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 62 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+OpenBLAS blas_thread_init: pthread_create failed for thread 63 of 64: Resource temporarily unavailable
+OpenBLAS blas_thread_init: RLIMIT_NPROC 4000 current, 4000 max
+Traceback (most recent call last):
+  File "/p/risheq/scenesmith/.venv/lib/python3.11/site-packages/numpy/core/__init__.py", line 24, in <module>
+    from . import multiarray
+  File "/p/risheq/scenesmith/.venv/lib/python3.11/site-packages/numpy/core/multiarray.py", line 10, in <module>
+    from . import overrides
+  File "/p/risheq/scenesmith/.venv/lib/python3.11/site-packages/numpy/core/overrides.py", line 8, in <module>
+    from numpy.core._multiarray_umath import (
+ImportError: PyCapsule_Import could not import module "datetime"
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/p/risheq/scenesmith/.venv/lib/python3.11/site-packages/numpy/__init__.py", line 130, in <module>
+    from numpy.__config__ import show as show_config
+  File "/p/risheq/scenesmith/.venv/lib/python3.11/site-packages/numpy/__config__.py", line 4, in <module>
+    from numpy.core._multiarray_umath import (
+  File "/p/risheq/scenesmith/.venv/lib/python3.11/site-packages/numpy/core/__init__.py", line 50, in <module>
+    raise ImportError(msg)
+ImportError: 
+
+IMPORTANT: PLEASE READ THIS FOR ADVICE ON HOW TO SOLVE THIS ISSUE!
+
+Importing the numpy C-extensions failed. This error can happen for
+many reasons, often due to issues with your setup or how NumPy was
+installed.
+
+We have compiled some common reasons and troubleshooting tips at:
+
+    https://numpy.org/devdocs/user/troubleshooting-importerror.html
+
+Please note and check the following:
+
+  * The Python version is: Python3.11 from "/p/risheq/scenesmith/.venv/bin/python3"
+  * The NumPy version is: "1.26.4"
+
+and make sure that they are the versions you expect.
+Please carefully study the documentation linked above for further help.
+
+Original error was: PyCapsule_Import could not import module "datetime"
+
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/p/risheq/social_mdp/examples/run_object_inference.py", line 70, in <module>
+    import numpy as np
+  File "/p/risheq/scenesmith/.venv/lib/python3.11/site-packages/numpy/__init__.py", line 135, in <module>
+    raise ImportError(msg) from e
+ImportError: Error importing numpy: you should not try to import numpy from
+        its source directory; please exit the numpy source tree, and relaunch
+        your python interpreter from there.
+Segmentation fault

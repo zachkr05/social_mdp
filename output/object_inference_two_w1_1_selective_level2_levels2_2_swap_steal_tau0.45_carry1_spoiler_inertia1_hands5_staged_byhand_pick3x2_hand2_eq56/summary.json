@@ -1,0 +1,566 @@
+{
+ "scene": {
+  "name": "two_rooms",
+  "grid": [
+   [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
+    1,
+    1,
+    1,
+    1,
+    1,
+    0
+   ],
+   [
+    0,
+    1,
+    1,
+    0,
+    1,
+    1,
+    0
+   ],
+   [
+    0,
+    1,
+    1,
+    1,
+    1,
+    0,
+    0
+   ],
+   [
+    0,
+    0,
+    1,
+    1,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
+    0,
+    1,
+    1,
+    1,
+    1,
+    0
+   ],
+   [
+    0,
+    1,
+    1,
+    0,
+    1,
+    1,
+    0
+   ],
+   [
+    0,
+    1,
+    1,
+    1,
+    1,
+    1,
+    0
+   ],
+   [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  ],
+  "starts": [
+   [
+    1,
+    2
+   ],
+   [
+    7,
+    4
+   ]
+  ],
+  "pickups": [
+   [
+    7,
+    3
+   ],
+   [
+    1,
+    3
+   ]
+  ],
+  "destinations": [
+   [
+    7,
+    1
+   ],
+   [
+    1,
+    5
+   ]
+  ],
+  "candidates": [
+   [
+    1,
+    5
+   ],
+   [
+    7,
+    1
+   ],
+   [
+    3,
+    4
+   ],
+   [
+    5,
+    2
+   ],
+   [
+    3,
+    1
+   ],
+   [
+    5,
+    5
+   ]
+  ],
+  "objects": [
+   [
+    7,
+    3
+   ],
+   [
+    1,
+    3
+   ]
+  ],
+  "handoff_cells": [],
+  "rooms": null
+ },
+ "options": {
+  "swap_on_place": true,
+  "steal": true,
+  "foreign_carry_cost": 1.0,
+  "inertia": 1.0,
+  "temperature": 0.45,
+  "pick_cost_rate": 2.0
+ },
+ "weights": [
+  1.0,
+  1.0
+ ],
+ "levels": [
+  2,
+  2
+ ],
+ "rows": [
+  {
+   "pairing": [
+    "cooperation",
+    "cooperation"
+   ],
+   "objects": "inferred",
+   "done_at": [
+    20,
+    16
+   ],
+   "own_goal": [
+    true,
+    true
+   ],
+   "steps": 21,
+   "stopped_by": "done",
+   "levels_used": [
+    2,
+    2
+   ],
+   "believes_partners_object": [
+    1.0,
+    1.0
+   ],
+   "believes_partners_destination": [
+    1.0,
+    1.0
+   ],
+   "believes_social": [
+    [
+     "competition",
+     0.715
+    ],
+    [
+     "cooperation",
+     0.623
+    ]
+   ],
+   "set_downs_in_vain": [
+    0,
+    0
+   ],
+   "hand_overs_in_vain": [
+    0,
+    0
+   ],
+   "took_others_object": [
+    {
+     "t": 5,
+     "what": "picked up",
+     "by": "agent_1",
+     "obj": "O2"
+    }
+   ],
+   "wall_time_s": 507.4
+  },
+  {
+   "pairing": [
+    "cooperation",
+    "conflict"
+   ],
+   "objects": "inferred",
+   "done_at": [
+    20,
+    29
+   ],
+   "own_goal": [
+    true,
+    true
+   ],
+   "steps": 30,
+   "stopped_by": "done",
+   "levels_used": [
+    2,
+    2
+   ],
+   "believes_partners_object": [
+    1.0,
+    1.0
+   ],
+   "believes_partners_destination": [
+    1.0,
+    1.0
+   ],
+   "believes_social": [
+    [
+     "conflict / hinder",
+     1.0
+    ],
+    [
+     "competition",
+     0.468
+    ]
+   ],
+   "set_downs_in_vain": [
+    0,
+    0
+   ],
+   "hand_overs_in_vain": [
+    0,
+    0
+   ],
+   "took_others_object": [
+    {
+     "t": 4,
+     "what": "picked up",
+     "by": "agent_1",
+     "obj": "O2"
+    }
+   ],
+   "wall_time_s": 583.9
+  },
+  {
+   "pairing": [
+    "cooperation",
+    "competition"
+   ],
+   "objects": "inferred",
+   "done_at": [
+    20,
+    18
+   ],
+   "own_goal": [
+    true,
+    true
+   ],
+   "steps": 21,
+   "stopped_by": "done",
+   "levels_used": [
+    2,
+    2
+   ],
+   "believes_partners_object": [
+    1.0,
+    1.0
+   ],
+   "believes_partners_destination": [
+    1.0,
+    1.0
+   ],
+   "believes_social": [
+    [
+     "conflict / hinder",
+     0.917
+    ],
+    [
+     "competition",
+     0.494
+    ]
+   ],
+   "set_downs_in_vain": [
+    0,
+    0
+   ],
+   "hand_overs_in_vain": [
+    0,
+    0
+   ],
+   "took_others_object": [
+    {
+     "t": 4,
+     "what": "picked up",
+     "by": "agent_1",
+     "obj": "O2"
+    }
+   ],
+   "wall_time_s": 548.9
+  },
+  {
+   "pairing": [
+    "cooperation",
+    "coercion"
+   ],
+   "objects": "inferred",
+   "done_at": [
+    20,
+    18
+   ],
+   "own_goal": [
+    true,
+    true
+   ],
+   "steps": 21,
+   "stopped_by": "done",
+   "levels_used": [
+    2,
+    2
+   ],
+   "believes_partners_object": [
+    1.0,
+    1.0
+   ],
+   "believes_partners_destination": [
+    1.0,
+    1.0
+   ],
+   "believes_social": [
+    [
+     "conflict / hinder",
+     0.928
+    ],
+    [
+     "competition",
+     0.494
+    ]
+   ],
+   "set_downs_in_vain": [
+    0,
+    0
+   ],
+   "hand_overs_in_vain": [
+    0,
+    0
+   ],
+   "took_others_object": [
+    {
+     "t": 4,
+     "what": "picked up",
+     "by": "agent_1",
+     "obj": "O2"
+    }
+   ],
+   "wall_time_s": 559.0
+  },
+  {
+   "pairing": [
+    "cooperation",
+    "exchange"
+   ],
+   "objects": "inferred",
+   "done_at": [
+    20,
+    16
+   ],
+   "own_goal": [
+    true,
+    true
+   ],
+   "steps": 21,
+   "stopped_by": "done",
+   "levels_used": [
+    2,
+    2
+   ],
+   "believes_partners_object": [
+    1.0,
+    1.0
+   ],
+   "believes_partners_destination": [
+    1.0,
+    1.0
+   ],
+   "believes_social": [
+    [
+     "competition",
+     0.715
+    ],
+    [
+     "cooperation",
+     0.623
+    ]
+   ],
+   "set_downs_in_vain": [
+    0,
+    0
+   ],
+   "hand_overs_in_vain": [
+    0,
+    0
+   ],
+   "took_others_object": [
+    {
+     "t": 5,
+     "what": "picked up",
+     "by": "agent_1",
+     "obj": "O2"
+    }
+   ],
+   "wall_time_s": 512.6
+  },
+  {
+   "pairing": [
+    "cooperation",
+    "none"
+   ],
+   "objects": "inferred",
+   "done_at": [
+    16,
+    33
+   ],
+   "own_goal": [
+    true,
+    true
+   ],
+   "steps": 34,
+   "stopped_by": "done",
+   "levels_used": [
+    2,
+    2
+   ],
+   "believes_partners_object": [
+    1.0,
+    1.0
+   ],
+   "believes_partners_destination": [
+    1.0,
+    1.0
+   ],
+   "believes_social": [
+    [
+     "exchange",
+     0.433
+    ],
+    [
+     "competition",
+     0.577
+    ]
+   ],
+   "set_downs_in_vain": [
+    0,
+    0
+   ],
+   "hand_overs_in_vain": [
+    0,
+    0
+   ],
+   "took_others_object": [
+    {
+     "t": 4,
+     "what": "picked up",
+     "by": "agent_1",
+     "obj": "O2"
+    }
+   ],
+   "wall_time_s": 459.7
+  },
+  {
+   "pairing": [
+    "cooperation",
+    "hinder"
+   ],
+   "objects": "inferred",
+   "done_at": [
+    20,
+    null
+   ],
+   "own_goal": [
+    true,
+    false
+   ],
+   "steps": 21,
+   "stopped_by": "done",
+   "levels_used": [
+    2,
+    2
+   ],
+   "believes_partners_object": [
+    0.999,
+    1.0
+   ],
+   "believes_partners_destination": [
+    0.987,
+    1.0
+   ],
+   "believes_social": [
+    [
+     "conflict / hinder",
+     1.0
+    ],
+    [
+     "competition",
+     0.468
+    ]
+   ],
+   "set_downs_in_vain": [
+    0,
+    0
+   ],
+   "hand_overs_in_vain": [
+    0,
+    0
+   ],
+   "took_others_object": [
+    {
+     "t": 4,
+     "what": "picked up",
+     "by": "agent_1",
+     "obj": "O2"
+    }
+   ],
+   "wall_time_s": 488.0
+  }
+ ]
+}

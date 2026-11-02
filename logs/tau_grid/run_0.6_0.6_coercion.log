@@ -1,0 +1,24 @@
+/p/risheq/scenesmith/.venv/lib/python3.11/site-packages/numba/np/ufunc/parallel.py:373: NumbaWarning: [1mThe TBB threading layer requires TBB version 2021 update 6 or later i.e., TBB_INTERFACE_VERSION >= 12060. Found TBB_INTERFACE_VERSION = 12050. The TBB threading layer is disabled.[0m
+  warnings.warn(problem)
+    coercion / cooperation  objects inferred done at 16 / 20   (done, 21 transitions, 537 s)
+    coercion / conflict     objects inferred done at 13 / 25   (done, 26 transitions, 477 s)
+    coercion / competition  objects inferred done at 13 / 15   (done, 16 transitions, 308 s)
+    coercion / coercion     objects inferred done at 13 / 23   (done, 24 transitions, 462 s)
+    coercion / exchange     objects inferred done at 13 / 18   (done, 19 transitions, 374 s)
+    coercion / none         objects inferred done at 13 / 15   (done, 16 transitions, 272 s)
+    coercion / hinder       objects inferred done at 33 / no goal (done, 34 transitions, 990 s)
+# Which object the partner wants, inferred or known: two_rooms scene, w = 1 / 1, cooperation selective, every robot at levels 2 / 2, swaps on a place, taking from hands, Eq. 7's tau 0.6, a move with the partner's object costs 1 x a move, a hinderer without a goal of its own, inertia: no undoing the last action unless it is worth 1 x a move's cost more than the next best, two posteriors by the partner's hands (its object while it holds nothing, its destination while it holds an object)
+
+Transition at which agent_1 / agent_2 finished its own goal (– = never; no goal: a hinderer without a goal of its own); with the objects inferred, each robot's final belief that its partner wants the partner's own object and that it goes to its true destination (– : a level-0 robot holds no belief); acts for the partner that did not count (set-downs / hand-overs, per robot).
+
+| pairing | inferred | belief: partner's object | ... its destination | in vain | wall time |
+|---|---|---|---|---|---|
+| coercion / cooperation | 16 / 20 | 1.00 / 1.00 | 1.00 / 1.00 | 0+0 / 0+0 | 537 s |
+| coercion / conflict | 13 / 25 | 1.00 / 1.00 | 1.00 / 1.00 | 0+0 / 0+0 | 477 s |
+| coercion / competition | 13 / 15 | 1.00 / 1.00 | 1.00 / 1.00 | 0+0 / 0+0 | 308 s |
+| coercion / coercion | 13 / 23 | 1.00 / 1.00 | 1.00 / 1.00 | 0+0 / 0+0 | 462 s |
+| coercion / exchange | 13 / 18 | 1.00 / 1.00 | 1.00 / 1.00 | 0+0 / 0+0 | 374 s |
+| coercion / none | 13 / 15 | 1.00 / 1.00 | 1.00 / 1.00 | 0+0 / 0+0 | 272 s |
+| coercion / hinder | 33 / no goal | 0.00 / 1.00 | 0.18 / 1.00 | 0+0 / 0+0 | 990 s |
+
+/p/risheq/social_mdp/output/object_inference_two_w1_1_selective_level2_levels2_2_swap_steal_tau0.6_carry1_spoiler_inertia1_hands5_staged_byhand_pick3x2_hand2_eq56
