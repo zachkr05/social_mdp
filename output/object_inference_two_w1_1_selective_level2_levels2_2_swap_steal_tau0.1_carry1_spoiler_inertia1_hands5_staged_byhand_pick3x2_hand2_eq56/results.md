@@ -4,10 +4,10 @@ Transition at which agent_1 / agent_2 finished its own goal (– = never; no goa
 
 | pairing | inferred | belief: partner's object | ... its destination | in vain | wall time |
 |---|---|---|---|---|---|
-| conflict / cooperation | – / 20, stand-off | 1.00 / 1.00 | 1.00 / 1.00 | 0+0 / 0+0 | 538 s |
-| conflict / conflict | 43 / 31 | 1.00 / 1.00 | 1.00 / 1.00 | 0+0 / 0+0 | 982 s |
-| conflict / competition | 27 / – | 1.00 / 1.00 | 0.17 / 1.00 | 0+0 / 0+0 | 902 s |
-| conflict / coercion | 39 / 32 | 1.00 / 1.00 | 1.00 / 1.00 | 0+0 / 0+0 | 859 s |
-| conflict / exchange | 38 / 40 | 1.00 / 1.00 | 1.00 / 1.00 | 0+0 / 0+0 | 753 s |
-| conflict / none | 38 / 40 | 1.00 / 1.00 | 1.00 / 1.00 | 0+0 / 0+0 | 613 s |
-| conflict / hinder | 36 / no goal | 1.00 / 1.00 | 0.17 / 1.00 | 0+0 / 0+0 | 552 s |
+| none / cooperation | 15 / 20 | 1.00 / 1.00 | 1.00 / 1.00 | 0+0 / 0+0 | 104 s |
+| none / conflict | 16 / 26 | 1.00 / 1.00 | 1.00 / 1.00 | 0+0 / 0+0 | 111 s |
+| none / competition | 13 / 15 | 1.00 / 1.00 | 1.00 / 1.00 | 0+0 / 0+0 | 54 s |
+| none / coercion | 13 / 15 | 1.00 / 1.00 | 1.00 / 1.00 | 0+0 / 0+0 | 52 s |
+| none / exchange | 13 / 15 | 1.00 / 1.00 | 1.00 / 1.00 | 0+0 / 0+0 | 44 s |
+| none / none | 13 / 15 | 1.00 / 1.00 | 1.00 / 1.00 | 0+0 / 0+0 | 45 s |
+| none / hinder | 23 / no goal | 1.00 / 1.00 | 0.17 / 1.00 | 0+0 / 0+0 | 147 s |
