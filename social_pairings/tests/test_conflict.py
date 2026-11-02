@@ -1,4 +1,5 @@
-"""Task conflict (``Config.conflict="task"``, the default since 2026-11-01).
+"""Task conflict (``Config.conflict="task"``, an option since 2026-11-01; the default is
+Table I's conflict, "table", as before -- the task conflict was the default for a few hours).
 
 Table I's conflict above level 1 is ``-R_j``, and ``R_j`` holds the partner's own term about
 the robot: against a cooperator ``+w_j r~(g_i)``, so the conflict robot's own goal is worth
@@ -8,12 +9,13 @@ the table's entry at l = 1 at every level, against every partner:
 
     R_i = r(g_i) - w r(g_j) - c(a_i).
 
-"table" is the table as printed (``TOLD``; every record of before).  Checked here: the terms,
-by the engine and by the reference; the option and the records of before; the levels and the
-names; every array of levels 0-2 against brute force with a level-2 conflict robot under the
-task reading; the example script's ``--resume``, which keeps (and copies from the folder of
-before) every record without a level-2 conflict robot and no other; and that such a pairing
-rolls out alike under both readings while a conflict pairing does not (27 s).
+"table" is the table as printed (the default; every record of before).  Checked here: the
+terms, by the engine and by the reference; the option and the records of before; the levels
+and the names; every array of levels 0-2 against brute force with a level-2 conflict robot
+under the task reading; the example script's ``--resume``, which keeps (and copies from the
+folder of the other reading, either way) every record without a level-2 conflict robot and
+no other; and that such a pairing rolls out alike under both readings while a conflict
+pairing does not (27 s).
 """
 import dataclasses
 import importlib.util
@@ -103,15 +105,16 @@ class Terms(unittest.TestCase):
         self.assertIn("-1 R_j", G.describe(G.CONFLICT, 2, G.COOPERATION))
         self.assertEqual(G.describe(G.CONFLICT, 1, conflict="task"), G.describe(G.CONFLICT, 1))
         self.assertEqual(goal_label("conflict", "rival", None, "task"), "conflict (task)")
-        self.assertEqual(goal_label("conflict", "rival", None, "table"), "conflict (Table I)")
+        self.assertEqual(goal_label("conflict", "rival", None, "table"), "conflict")
         self.assertEqual(goal_label("conflict"), "conflict")
         self.assertEqual(goal_label("hinder", None, None, "task"), "hinder")
 
 
 class Option(unittest.TestCase):
     def test_the_option(self):
-        self.assertEqual(Config().conflict, "task")
+        self.assertEqual(Config().conflict, "table")             # Table I's, as before
         self.assertEqual(Config(**TOLD).conflict, "table")
+        self.assertNotIn("conflict", TOLD)                         # nothing to restore
         self.assertEqual(ADDED_FIELDS["conflict"], "table")
         self.assertEqual(written_with({})["conflict"], "table")      # a record of before
         with self.assertRaises(ValueError):
@@ -119,11 +122,16 @@ class Option(unittest.TestCase):
 
     def test_levels(self):
         """Level 2 by default either way (Config.level_free_level is 2); with
-        level_free_level=1 a task conflict robot is level-free, as a hinderer is."""
-        self.assertEqual(default_levels(("conflict", "cooperation"), Config()), (2, 2))
+        level_free_level=1 a task conflict robot is level-free, as a hinderer is, and a
+        conflict robot of the table is not."""
+        for reading in ("table", "task"):
+            self.assertEqual(default_levels(("conflict", "cooperation"),
+                                            Config(conflict=reading)), (2, 2))
         self.assertEqual(default_levels(("conflict", "cooperation"), Config(**TOLD)), (2, 2))
         self.assertEqual(default_levels(("conflict", "cooperation"),
-                                        Config(level_free_level=1)), (1, 2))
+                                        Config(level_free_level=1, conflict="task")), (1, 2))
+        self.assertEqual(default_levels(("conflict", "cooperation"),
+                                        Config(level_free_level=1)), (2, 2))
 
 
 class AgainstBruteForce(unittest.TestCase):
@@ -134,7 +142,8 @@ class AgainstBruteForce(unittest.TestCase):
         hold the conflict robot's alone)."""
         from .test_models import ModelsAgainstBruteForce
         case = ModelsAgainstBruteForce(methodName="compare")
-        case.compare(tight_now(), (2, 2), ("conflict", "cooperation"), (1.5, 2.0), seed=301)
+        case.compare(tight_now(conflict="task"), (2, 2), ("conflict", "cooperation"),
+                     (1.5, 2.0), seed=301)
 
 
 def _script():
@@ -146,24 +155,26 @@ def _script():
     return module
 
 
-def _record(pair, levels_used, **options) -> dict:
-    """A record as one made before 2026-11-01 holds it: no "conflict" in its config."""
-    config = to_json(dataclasses.asdict(Config(**{"conflict": "table", **options})))
-    del config["conflict"]
+def _record(pair, levels_used, reading=None, **options) -> dict:
+    """A record made under the task conflict (``reading="task"``) or, by default, as one made
+    before 2026-11-01 holds it: no "conflict" in its config (the table's)."""
+    config = to_json(dataclasses.asdict(Config(**{"conflict": reading or "table", **options})))
+    if reading is None:
+        del config["conflict"]
     return dict(config=config, social_goals=list(pair), levels=[2, 2],
                 levels_used=list(levels_used), actions=list(ACTION_NAMES), trace=[])
 
 
 class Resume(unittest.TestCase):
     """``--resume``: a record without a level-2 conflict robot holds under either reading;
-    a ``_taskconflict`` folder takes it, with its videos, from the folder of before."""
+    the folder of either reading takes it, with its videos, from the other's."""
 
     @classmethod
     def setUpClass(cls):
         cls.script = _script()
 
     def test_what_is_kept(self):
-        unkept, now = self.script.unkept, Config()
+        unkept, now = self.script.unkept, Config(conflict="task")
         self.assertIsNone(unkept(_record(("cooperation", "hinder"), (2, 2)), now,
                                  ("cooperation", "hinder"), None))
         self.assertIsNone(unkept(_record(("conflict", "cooperation"), (1, 2)), now,
@@ -178,6 +189,13 @@ class Resume(unittest.TestCase):
                              ("cooperation", "hinder"), None))
         self.assertIn("other levels", unkept(_record(("cooperation", "hinder"), (2, 2)), now,
                                              ("cooperation", "hinder"), (1, 1)))
+        # the other way: records made under the task conflict, asked for under the table's
+        table = Config()
+        self.assertIsNone(unkept(_record(("cooperation", "hinder"), (2, 2), "task"), table,
+                                 ("cooperation", "hinder"), None))
+        self.assertIn("another configuration",
+                      unkept(_record(("cooperation", "conflict"), (2, 2), "task"), table,
+                             ("cooperation", "conflict"), None))
 
     def test_what_is_taken_from_the_folder_of_before(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -188,7 +206,7 @@ class Resume(unittest.TestCase):
                 save_result(before / f"{pair[0]}__{pair[1]}__inferred.json",
                             _record(pair, (2, 2)))
             (before / "cooperation__hinder__inferred.mp4").write_bytes(b"video")
-            cfg = Config()
+            cfg = Config(conflict="task")
             kept = now / "cooperation__hinder__inferred.json"
             got = self.script.reuse(kept, before, cfg, ("cooperation", "hinder"), (2, 2))
             self.assertIsNotNone(got)
@@ -205,6 +223,25 @@ class Resume(unittest.TestCase):
             self.assertEqual(sorted(p.name for p in now.iterdir()),
                              ["cooperation__hinder__inferred.json",
                               "cooperation__hinder__inferred.mp4"])
+
+    def test_what_the_table_takes_from_the_task_conflict(self):
+        """The default folder (Table I's conflict) takes a record without a level-2 conflict
+        robot from the ``_taskconflict`` folder, and no conflict pairing's."""
+        with tempfile.TemporaryDirectory() as tmp:
+            task, table = Path(tmp) / "x_taskconflict", Path(tmp) / "x"
+            task.mkdir()
+            table.mkdir()
+            for pair in (("exchange", "none"), ("none", "conflict")):
+                save_result(task / f"{pair[0]}__{pair[1]}__inferred.json",
+                            _record(pair, (2, 2), "task"))
+            cfg = Config()
+            kept = table / "exchange__none__inferred.json"
+            self.assertIsNotNone(self.script.reuse(kept, task, cfg, ("exchange", "none"),
+                                                   (2, 2)))
+            self.assertEqual(load_result(kept), load_result(task / kept.name))
+            self.assertIsNone(self.script.reuse(table / "none__conflict__inferred.json", task,
+                                                cfg, ("none", "conflict"), (2, 2)))
+            self.assertEqual([p.name for p in table.iterdir()], [kept.name])
 
 
 class Rollouts(unittest.TestCase):

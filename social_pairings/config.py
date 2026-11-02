@@ -43,9 +43,8 @@ BELIEF_DEVICES = dict(belief_lapse=0.0, partner_delivers=False, partner_parks=Fa
 # that cooperates with every partner and a hinderer (and a competitor of a race form) at
 # level 1, and as until 2026-10-17, one posterior over (object, destination, social goal)
 # updated by every action, and as until 2026-10-18, the automatic hands and their costs
-# (AUTOMATIC_HANDS), and as until 2026-11-01, conflict as Table I prints it above level 1
-# (-R_j).  ``Config(**TOLD)`` restores them; a result made with another reading of
-# competition names it.
+# (AUTOMATIC_HANDS).  ``Config(**TOLD)`` restores them; a result made with another reading
+# of competition names it.
 # The rule of the hands until 2026-10-18 and its costs (automatic pick-up of a robot's own
 # object and set-down at its destination, an instant pick costing a move, the other hand
 # actions a move each): ``Config(**AUTOMATIC_HANDS)``
@@ -53,7 +52,7 @@ AUTOMATIC_HANDS = dict(automatic_hands=True, pick_steps=1, pick_cost_rate=1.0, u
 TOLD = dict(partner_social_goal="known", social_hypotheses=PAPER_GOALS, exchange_level1="none",
             competition="race_then_hinder", partner_object="known",
             cooperate_with=EVERY_PARTNER, level_free_level=1, hinder_own_goal=True,
-            belief_stages=False, conflict="table", **AUTOMATIC_HANDS)
+            belief_stages=False, **AUTOMATIC_HANDS)
 # (the devices of before, under which every record before 2026-10-30 was made, are not
 # restored by TOLD: they are gone -- BELIEF_DEVICES)
 # Fields added to Config after records were first written, each with the value every record
@@ -78,7 +77,7 @@ ADDED_FIELDS = dict(
     child_conditioning=True,       # 2026-10-30 (the partner's estimate conditioned on the action)
     physical_likelihood="level0",  # 2026-10-30 (a record of before is never that of now anyway)
     robot_temperatures=None,       # 2026-11-01 (until then one tau for both robots)
-    conflict="table",              # 2026-11-01 (evening; until then -R_j above level 1)
+    conflict="table",              # 2026-11-01 (evening; the default again, as before)
 )
 
 
@@ -290,17 +289,18 @@ class Config:
     # The default since 2026-10-08 (the scripts' since 2026-10-06); "race_then_hinder" until
     # then (TOLD).
     competition: str = "rival"
-    # Conflict above level 1 (goals.py, "conflict").  "task" (the default since 2026-11-01;
-    # the user: "Ok lets implement this: Option 1: task conflict"): Table I's entry for l = 1
-    # at every level, -w r(g_j) -- r(g_i) - w r(g_j) - c(a_i) whoever the partner is: the
-    # robot does its own task and works against its partner's.  "table": the table as
-    # printed, -w R_j above level 1, the default until then (TOLD).  R_j holds the
-    # partner's own term about the robot, so against a cooperator the robot was paid
-    # -w w_j r~(g_i) on top of its own goal reward: at w = 1, once the cooperator was sure
-    # of its goal, the goal was worth nothing to it, and conflict / cooperation put its own
-    # object back down (2026-11-01).  Only a level-2 conflict robot's own reward changes:
-    # its partner models it at level 1, where both readings are -w r(g_j).
-    conflict: str = "task"
+    # Conflict above level 1 (goals.py, "conflict").  "table" (the default): Table I as
+    # printed, -w R_j above level 1.  R_j holds the partner's own term about the robot, so
+    # against a cooperator the robot is paid -w w_j r~(g_i) on top of its own goal reward: at
+    # w = 1, once the cooperator is sure of its goal, the goal is worth nothing to it, and
+    # conflict / cooperation put its own object back down (2026-11-01).  "task" (an option
+    # since 2026-11-01; the user: "Ok lets implement this: Option 1: task conflict"; the
+    # default for that evening only -- then: "Ok can we revert the change for the
+    # conflicting agent and just restore it to how it was?"): Table I's entry for l = 1 at
+    # every level, -w r(g_j) -- r(g_i) - w r(g_j) - c(a_i) whoever the partner is: the robot
+    # does its own task and works against its partner's.  Only a level-2 conflict robot's own
+    # reward changes: its partner models it at level 1, where both readings are -w r(g_j).
+    conflict: str = "table"
     # Whom a level-2 cooperator cooperates with: the partners' social goals against which
     # its cell of Table I's column l > 1, +R_j, holds; against any other partner it has no
     # social term and minds its own goal (goals.py, "cooperation").  As printed the cell

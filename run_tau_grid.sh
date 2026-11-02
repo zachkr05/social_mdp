@@ -44,10 +44,10 @@
 # all seven), THREADS per worker (default 2), WORKERS (default: the CPUs / THREADS), SWAP
 # (default 1; 0: no swaps on a place, the folders then lack _swap), MEM (whole GiB a rollout may use;
 # sets the default WORKERS and THREADS by the machine's memory), PHYS
-# (Config.physical_likelihood), CONFLICT (Config.conflict: task, the default since 2026-11-01,
-# in folders ..._taskconflict that take every pairing without conflict from the folder of
-# before and roll out the conflict pairings alone; table, Table I's -w R_j), SCENE (default
-# two), STEPS (default 60), NOVIDEO (default 1:
+# (Config.physical_likelihood), CONFLICT (Config.conflict: table, the default, Table I's
+# -w R_j; task, an option since 2026-11-01, in folders ..._taskconflict; either folder takes
+# every pairing without conflict from the other and rolls out the conflict pairings alone),
+# SCENE (default two), STEPS (default 60), NOVIDEO (default 1:
 # records only -- 1225 x 3 videos is a lot; NOVIDEO=0 draws them), LOGS (default
 # logs/tau_grid), OUT (default output/tau_grid), PYTHON (default python3).
 set -e

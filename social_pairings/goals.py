@@ -56,17 +56,18 @@ hinderer takes its partner to be: at level 1 a robot without social goal, at lev
 default since 2026-10-11, ``Config.level_free_level``) a robot with one of the social goals
 it holds possible -- so it can read a partner that picks its object up as one that helps.
 
-``conflict`` has two readings (``Config.conflict``).  "table" is the table as printed,
-``-r(g_j)`` at l = 1 and ``-R_j`` above it -- with the partner's own term inside ``R_j``.
+``conflict`` has two readings (``Config.conflict``).  "table" (the default) is the table as
+printed, ``-r(g_j)`` at l = 1 and ``-R_j`` above it -- with the partner's own term inside ``R_j``.
 Against a partner that cooperates with the robot that term is ``+w_j r~(g_i)``, and
 
     R_i = (1 - w_i w_j b~(g_i)) r(g_i) - w_i r(g_j) - c(a_i) - ...
 
 (``b~(g_i)``: how sure the partner is of the robot's goal): at w = 1 the robot's own goal is
 worth nothing to it once its partner knows it, and in conflict / cooperation of 2026-11-01
-it put its own object back down.  "task" (the default since 2026-11-01; the user: "Ok lets
-implement this: Option 1: task conflict") is the table's entry at l = 1 kept at every
-level, against every partner:
+it put its own object back down.  "task" (an option since 2026-11-01; the user: "Ok lets
+implement this: Option 1: task conflict"; the default for that evening only, then "restore
+it to how it was") is the table's entry at l = 1 kept at every level, against every
+partner:
 
     R_i = r(g_i) - w_i r(g_j) - c(a_i).
 
@@ -217,11 +218,11 @@ _HELPERS = (COOPERATION,)
 # Config.cooperate_with (its default since 2026-10-11; every goal, "all", until then): the
 # partners whose reward R_j a level-2 cooperator takes on
 COOPERATE_WITH = ("cooperation", "competition", "exchange")
-# Config.conflict (its default since 2026-11-01: "task"; "table" until then): a conflict
-# robot above level 1 is paid -w r(g_j), the table's entry at l = 1, or -w R_j as printed
+# Config.conflict (its default: "table", -w R_j above level 1 as printed; "task", an option
+# since 2026-11-01: -w r(g_j), the table's entry at l = 1, at every level)
 CONFLICT_READINGS = ("task", "table")
-# ... and what a figure calls each of them
-CONFLICT_NAMES = {"task": "task", "table": "Table I"}
+# ... and what a figure calls each of them (the table's reading, the default, goes unnamed)
+CONFLICT_NAMES = {"task": "task"}
 
 _INDEX = {name: i for i, name in enumerate(SOCIAL_GOALS)}
 _ALIASES = {"cooperate": "cooperation", "cooperative": "cooperation", "help": "cooperation",

@@ -34,9 +34,9 @@ def default_levels(goals: Sequence, cfg: Optional[Config] = None,
     * ``hinder``;
     * ``competition`` in its race forms (``Config.competition="race_then_hinder"`` and
       ``"race"``; the default reading, ``"rival"``, reasons at level 2 either way);
-    * ``conflict`` read as a task conflict (``Config.conflict="task"``, the default since
-      2026-11-01: ``-w r(g_j)`` at every level; as Table I prints it, ``"table"``, it holds
-      ``-R_j`` above level 1 and its default level is 2).
+    * ``conflict`` read as a task conflict (``Config.conflict="task"``, an option since
+      2026-11-01: ``-w r(g_j)`` at every level; as Table I prints it, ``"table"``, the
+      default, it holds ``-R_j`` above level 1 and its default level is 2).
 
     Why 1 until then: Table I has two columns.  Terms in ``r(g_j)`` are its column l = 1, given to a
     robot that takes its partner to pursue its physical goal and nothing else; at level 1

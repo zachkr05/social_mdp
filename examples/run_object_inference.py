@@ -52,14 +52,13 @@ belief update of Eqs. 5-6 as the authors' solver keeps it -- two posteriors, the
 filter, Eq. 5's transition term, nothing else (``social_pairings.models``), so that no
 folder of before, made with the devices of then, is kept by ``--resume``;
 ``--physical-likelihood level0``, the physical posterior on the partner's level-0 policies
-as in the authors' code rather than Eq. 6 as printed, writes to ``..._eq56l0``; since
-2026-11-01 in ``..._taskconflict``: a level-2 conflict robot is paid ``-w r(g_j)``, Table I's
-entry at l = 1, against every partner (``Config.conflict="task"``), ``--conflict table`` the
-table as printed, ``-w R_j``, and the folder without the suffix.  Only a pairing with a
-level-2 conflict robot changes with the reading, so ``--resume`` in a ``_taskconflict`` folder
-takes every other pairing's record (and its videos) from the folder without the suffix,
-where one was made with the options asked for, and rolls out the pairings with conflict
-alone):
+as in the authors' code rather than Eq. 6 as printed, writes to ``..._eq56l0``;
+``--conflict task`` (an option since 2026-11-01), a level-2 conflict robot paid ``-w r(g_j)``,
+Table I's entry at l = 1, against every partner, to ``..._taskconflict`` -- the default is
+the table as printed, ``-w R_j``, in the folder without the suffix.  Only a pairing with a
+level-2 conflict robot changes with the reading, so ``--resume`` in either folder takes
+every other pairing's record (and its videos) from the other, where one was made with the
+options asked for, and rolls out the pairings with conflict alone):
 per rollout ``<pairing>__<objects>.json`` and ``.mp4`` (an MP4 video); ``summary.json``;
 ``results.md``
 (the finishes; what each robot ended up believing of its partner's object, destination and
@@ -173,12 +172,12 @@ def unkept(result: dict, cfg: Config, pair, levels) -> Optional[str]:
     return None
 
 
-def reuse(path: Path, before: Optional[Path], cfg: Config, pair, levels) -> Optional[dict]:
-    """The record of ``path``'s rollout in ``before``, the folder of the same options under
+def reuse(path: Path, other: Optional[Path], cfg: Config, pair, levels) -> Optional[dict]:
+    """The record of ``path``'s rollout in ``other``, the folder of the same options under
     the other reading of conflict, copied here with its videos -- where the reading does
     not change the rollout and the record is the one asked for in every other option
     (:func:`unkept`).  None: there is none to take."""
-    old = None if before is None else before / path.name
+    old = None if other is None else other / path.name
     if old is None or not old.exists():
         return None
     result = load_result(old)
@@ -434,11 +433,11 @@ def main() -> None:
                              "the social posterior, Eq. 6 as the paper prints it.  level0: the "
                              "partner's level-0 policies, the authors' code (folders ..._eq56l0)")
     parser.add_argument("--conflict", choices=G.CONFLICT_READINGS, default=Config().conflict,
-                        help="Config.conflict: what a level-2 conflict robot is paid.  task (the "
-                             "default since 2026-11-01): -w r(g_j), Table I's entry at l = 1, "
-                             "against every partner -- it does its own task and works against "
-                             "its partner's (folders ..._taskconflict).  table: Table I as "
-                             "printed, -w R_j (the folders without the suffix)")
+                        help="Config.conflict: what a level-2 conflict robot is paid.  table "
+                             "(the default): Table I as printed, -w R_j.  task (an option since "
+                             "2026-11-01): -w r(g_j), Table I's entry at l = 1, against every "
+                             "partner -- it does its own task and works against its partner's "
+                             "(folders ..._taskconflict)")
     args = parser.parse_args()
     taus = None if args.temperature is None else tuple(args.temperature)
     if taus is not None and len(taus) not in (1, 2):
@@ -513,11 +512,13 @@ def main() -> None:
            + ("l0" if Config(**options).physical_likelihood == "level0" else ""))
     #        (... with the physical posterior on the level-0 policies, the authors' code)
     task = Config(**options).conflict == "task"
-    # a level-2 conflict robot paid -w r(g_j) against every partner (2026-11-01); the folder
-    # of the same options under the table's -w R_j, where every other pairing is the same
-    before = (ROOT / "output" / f"object_inference_{tag}").resolve() if task else None
+    # --conflict task: a level-2 conflict robot paid -w r(g_j) against every partner
+    # (2026-11-01), in ..._taskconflict.  The folder of the same options under the other
+    # reading holds every other pairing as it is here (goals.conflict_matters).
+    other = (ROOT / "output" / f"object_inference_{tag}{'' if task else '_taskconflict'}"
+             ).resolve()
     if args.output is not None:
-        before = None                       # (a folder named by hand has no folder of before)
+        other = None                        # (a folder named by hand has no such twin)
     tag += "_taskconflict" if task else ""
     out = (args.output or ROOT / "output" / f"object_inference_{tag}").resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -537,8 +538,8 @@ def main() -> None:
                 why = unkept(result, cfg, pair, levels)
                 if why is not None:
                     raise SystemExit(f"--resume: {path} {why}")
-            elif args.resume:                # no conflict robot at level 2: as it was before
-                result = reuse(path, before, cfg, pair, levels)
+            elif args.resume:                # no conflict robot at level 2: the same rollout
+                result = reuse(path, other, cfg, pair, levels)
                 taken = result is not None
             if result is None:
                 result = run_pairing(scene, pair, levels=levels, cfg=cfg, n_steps=args.steps)
@@ -549,7 +550,7 @@ def main() -> None:
             print(f"{pair[0]:>12} / {pair[1]:<12} objects {mode:<8} done at {finish(row):<9} "
                   f"({result['stopped_by']}, {result['steps']} transitions, "
                   f"{row['wall_time_s']:.0f} s)"
-                  + (f"  [taken from {before.name}: no conflict robot at level 2]"
+                  + (f"  [taken from {other.name}: no conflict robot at level 2]"
                      if taken else ""), flush=True)
             # with --resume, drawn again unless all of its videos are there (whole: a video
             # is renamed to its name only once written to the end)
@@ -588,8 +589,7 @@ def main() -> None:
                 f", a move with the partner's object costs {carry:g} x a move")
              + (", a hinderer without a goal of its own" if spoiler else "")
              + ("" if not any(G.parse_goal(g) == G.CONFLICT for pair in pairs for g in pair)
-                else ", conflict: -w r(g_j) at every level (task)" if task
-                else ", conflict: -w R_j above level 1 (Table I)")
+                or not task else ", conflict: -w r(g_j) at every level (task)")
              + ("" if inertia is None else
                 f", inertia: no undoing the last action unless it is worth {inertia:g} x a "
                 f"move's cost more than the next best")

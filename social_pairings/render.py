@@ -493,8 +493,8 @@ def goal_label(goal, competition: Optional[str] = None, cooperate_with=None,
     readings behave differently, and a figure should say which one it shows.  So is a
     cooperator that does not cooperate with every partner (``Config.cooperate_with``, where
     known; a record without it was made with Table I's): "cooperation (selective)"; and a
-    conflict robot by its reading (``Config.conflict``, where known; a record without it
-    was made with Table I's): "conflict (task)", "conflict (Table I)"."""
+    conflict robot under the task reading (``Config.conflict="task"``): "conflict (task)" --
+    under Table I's, the default, it is "conflict" as before."""
     if goal in (None, "none"):
         return "physical goal only"
     reading = COMPETITION_NAMES.get(competition)

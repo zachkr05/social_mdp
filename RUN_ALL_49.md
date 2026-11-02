@@ -1,22 +1,22 @@
 # All 49 pairings: the belief update of Eqs. 5-6 as the authors' solver keeps them (2026-10-30), nothing automatic, a pick-up of three transitions, two posteriors by the hands, five hand actions, the hinderer without a goal of its own, inertia
 
-## Task conflict (2026-11-01, evening)
+## Task conflict: an option (2026-11-01, evening)
 
-A level-2 conflict robot is now paid $-w\,r(\tilde g_j)$ against every partner, $R_i = r(g_i) -
-w\,r(\tilde g_j) - c(a_i)$ (`Config.conflict="task"`, the default; README, "Task conflict").
-Table I's $-w\,\tilde R_j$ is `CONFLICT=table` / `--conflict table`. Only the 13 pairings with
-conflict change, so the scripts' `--resume` rolls out those alone: the new folders end in
-`_taskconflict`, and each takes the other 36 records (and their videos) from the folder of
-the same options without the suffix, where they exist.
+Conflict is Table I's, $-w\,\tilde R_j$ above level 1: the default, as before. The task
+conflict pays a level-2 conflict robot $-w\,r(\tilde g_j)$ against every partner,
+$R_i = r(g_i) - w\,r(\tilde g_j) - c(a_i)$ (`CONFLICT=task` / `--conflict task`; README,
+"Task conflict").
+It was the default for a few hours that evening; the user then asked for conflict as it was.
+Only the 13 pairings with conflict differ between the two, so `--resume` takes the other 36
+records (and their videos) from the folder of the same options under the other reading --
+`..._taskconflict` for the task conflict, the name without the suffix for the table's --
+where they exist, and rolls out the conflict pairings alone.
 
-    python examples/run_object_inference.py --scene two --levels 2 2 --objects inferred --swap --steal --foreign-carry-cost 1 --inertia 1 --pick-cost 2 --resume --pairing conflict cooperation   # one pairing, with its video
-    sh run_all_49_parallel.sh                  # the 49 at tau 0.2: 13 rolled out, 36 taken
-    TAU=0.15 sh run_all_49_parallel.sh         # ... at another tau
-    SAME=1 TAUS="0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.55 0.6" sh run_tau_grid.sh   # the tau grid
-    CONFLICT=table sh run_all_49_parallel.sh   # Table I's conflict: the folder of before
+    CONFLICT=task sh run_all_49_parallel.sh    # the 49 at tau 0.2 with the task conflict: 13 rolled out, 36 taken
+    sh run_all_49_parallel.sh                  # Table I's conflict (the default): the folders of before
 
-A folder of before that is missing a record, or that was made with other options, simply
-gives nothing to take: those pairings are rolled out. With `OUTPUT=...` nothing is taken.
+A folder that is missing a record, or that was made with other options, simply gives
+nothing to take: those pairings are rolled out. With `OUTPUT=...` nothing is taken.
 
 ### Two decoy objects in the grid
 

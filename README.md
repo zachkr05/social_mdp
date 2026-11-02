@@ -23,9 +23,10 @@ python -m pytest social_pairings/tests/test_beliefs.py      # the belief update,
 TAU=0.15 sh run_all_49_parallel.sh                           # the 49 pairings
 TAU="0.2 0.5" sh run_all_49_parallel.sh                      # ... agent_1 at tau 0.2, agent_2 at 0.5
 sh run_tau_grid.sh                                           # ... at every pair of taus 0.1-0.5
-CONFLICT=table sh run_all_49_parallel.sh                     # ... with Table I's conflict, -w R_j
+CONFLICT=task sh run_all_49_parallel.sh                      # ... with the task conflict, -w r(g_j)
 ```
 
-Since 2026-11-01 (evening) a level-2 conflict robot is paid $-w\,r(\tilde g_j)$ against every
-partner, $R_i = r(g_i) - w\,r(\tilde g_j) - c(a_i)$: "task conflict", `Config.conflict`
-(`social_pairings/README.md`, "Task conflict"; `RUN_ALL_49.md`).
+Conflict is Table I's, $-w\,\tilde R_j$ above level 1. Since 2026-11-01 (evening) the task
+conflict, $R_i = r(g_i) - w\,r(\tilde g_j) - c(a_i)$ against every partner, is an option:
+`Config.conflict="task"`, `--conflict task`, `CONFLICT=task` (`social_pairings/README.md`,
+"Task conflict"; `RUN_ALL_49.md`).

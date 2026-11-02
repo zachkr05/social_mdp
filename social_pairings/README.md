@@ -156,11 +156,14 @@ The package is self-contained. It shares no code with `social_mdp/` in the same 
 experiment engine behind `run_experiment`, the ablation arms and the congruence scores): it does
 one thing, roll out a pairing of social goals and say what happened.
 
-## Task conflict (2026-11-01, evening)
+## Task conflict (option, since 2026-11-01, evening)
 
 The user: "Ok lets implement this: Option 1: task conflict ... $R_{\text{conflict}} = r(g_i) -
-w\,r(\tilde g_j) - c(a_i)$". `Config.conflict = "task"` is the default; `"table"` is Table I
-as printed, the rule until then (`TOLD`; every record of before).
+w\,r(\tilde g_j) - c(a_i)$". `Config.conflict = "task"` was the default for a few hours that
+evening; then the user: "Ok can we revert the change for the conflicting agent and just
+restore it to how it was?" -- so `"table"`, Table I as printed, is the default again, as
+before, and the task conflict an option (`--conflict task`, `CONFLICT=task`). What is below
+describes the option.
 
 **Why.** Table I's conflict above level 1 is $-\tilde R_j$, and $\tilde R_j$ holds the partner's
 own term about the robot. Against a cooperator that term is $+w_j\,r(\tilde g_i)$, so
@@ -198,12 +201,13 @@ Of the 49, the 13 with conflict change. The record's term reads "conflict: w (-1
 partner's goal reward, against every partner [task conflict ...]"; the titles say "conflict
 (task)".
 
-**Folders.** `run_object_inference.py --conflict task` (the default) writes to `..._taskconflict`;
-`--conflict table` to the folder without the suffix, as before. `--resume` in a
-`_taskconflict` folder takes every pairing without a level-2 conflict robot from the folder
-without the suffix, with its videos, where that record was made with the options asked for in
-every other field; it rolls out the conflict pairings alone. A record is kept in place on the
-same rule. The scripts take `CONFLICT=table`.
+**Folders.** `run_object_inference.py --conflict task` writes to `..._taskconflict`; the
+default, Table I's conflict, to the folder without the suffix, as before. `--resume` in either
+takes every pairing without a level-2 conflict robot from the other, with its videos, where
+that record was made with the options asked for in every other field; it rolls out the
+conflict pairings alone. A record is kept in place on the same rule. The scripts take
+`CONFLICT=task`. The titles name the task conflict, "conflict (task)"; under Table I's it is
+"conflict", as before.
 
 **Checked** (`tests/test_conflict.py`): the term against every partner, by the engine and by
 the reference; every other goal's term untouched under every reading of competition; equal to
@@ -218,7 +222,12 @@ passed when the code was handed over: `test_goals`, `test_spoiler.Terms`,
 script on the 3 x 3 map (`--conflict table`, then the default with `--resume`: the
 cooperation / hinder record taken, byte for byte, conflict / cooperation rolled out). The
 rest of the suite was not run; under `TOLD` (`tests/told.py`, which most of it uses) the
-reading is `"table"` and the code path is the one of before.
+reading is `"table"` and the code path is the one of before. With the default back to the
+table's (22:50 the same evening): the tests above but the brute force re-run and passed (the
+brute force asks for the task reading by name, the same model it passed with), and the script
+both ways on the 3 x 3 map -- `--conflict task`, then the default with `--resume`: the
+cooperation / hinder record taken from the `_taskconflict` folder byte for byte,
+conflict / cooperation rolled out under Table I's term.
 
 ## A tau per robot (2026-11-01)
 
@@ -3828,7 +3837,7 @@ every mix of levels ("Results").
 | option | default | why |
 |---|---|---|
 | `competition` | `"rival"` | "The model" above: a race against every partner but a cooperative one, against which it is the competitor of `"table_hostile"`; not told whom it faces, it weighs the two by its belief. `"race_then_hinder"` (the default until 2026-10-08): its own goal, and from then on against its partner; `"race"`: a competitor that stops once its goal is done; `"table"`: Table I as printed; `"table_hostile"`: Table I with $-\tilde R_j$ against a cooperative partner as well |
-| `conflict` | `"task"` | a level-2 conflict robot is paid $-w\,r(\tilde g_j)$, Table I's entry at l = 1, against every partner: $R_i = r(g_i) - w\,r(\tilde g_j) - c(a_i)$ ("Task conflict"; since 2026-11-01). `"table"`: $-w\,\tilde R_j$ as printed, the default until then (`TOLD`), under which the cooperator's term about the robot comes back into its reward and it may undo its own task |
+| `conflict` | `"table"` | a level-2 conflict robot is paid $-w\,\tilde R_j$, Table I as printed, under which a cooperator's term about the robot comes back into its reward and it may undo its own task. `"task"` (an option since 2026-11-01): $-w\,r(\tilde g_j)$, Table I's entry at l = 1, against every partner, $R_i = r(g_i) - w\,r(\tilde g_j) - c(a_i)$ ("Task conflict") |
 | `cooperate_with` | cooperation, competition, exchange (`COOPERATE_WITH`) | the partners against which a level-2 cooperator's cell of Table I, $+\tilde R_j$, holds; against any other it has no social term and minds its own goal, so that a hinderer's wish that it fail is not its own ("Whom a cooperator cooperates with"; since 2026-10-11). `"all"` (`EVERY_PARTNER`): the table as printed, the default until then (`TOLD`) |
 | `action_selection` | `"argmax"` | Algorithm 1 is greedy; line 4 above |
 | `forced_swap` | `False` | line 1 |
