@@ -518,7 +518,10 @@ def _title(result: dict, names: Sequence[str]) -> str:
     weights = result.get("weights")
     tail = "" if weights is None or all(g in (None, "none") for g in goals) else (
         f"     weights {weights[0]:g} / {weights[1]:g}")
-    return f"{names[0]}: {label[0]}     {names[1]}: {label[1]}{tail}"
+    hazards = "".join(f"     {what} {float(config[key]):g}" for key, what in
+                      (("goal_hazard", "hazard"), ("social_hazard", "social hazard"),
+                       ("hand_hazard", "hand hazard")) if config.get(key))   # (2026-11-02)
+    return f"{names[0]}: {label[0]}     {names[1]}: {label[1]}{tail}{hazards}"
 
 
 # ---- drawing -----------------------------------------------------------------------------------

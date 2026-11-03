@@ -13,6 +13,7 @@
 #     TAUS1="0.2" TAUS2="0.1 0.3 0.5" sh run_tau_grid.sh   # agent_1 fixed, agent_2 swept
 #     GOALS="competition coercion" sh run_tau_grid.sh      # only the pairings of these goals
 #     SAME=1 TAUS="0.1 0.15 0.2" sh run_tau_grid.sh         # one tau for both robots: 3 x 49
+#     SAME=1 TAUS="0.1 0.3 0.5" HAZARD=0.02 sh run_tau_grid.sh   # the partner's goal may change
 #
 # One folder per pair of taus, under output/ (..._tau<t1>_<t2>_..., or ..._tau<t>_... where the
 # two are equal: the folder of `--temperature <t>`).  Interrupted? Run the same line again:
@@ -47,6 +48,11 @@
 # (Config.physical_likelihood), CONFLICT (Config.conflict: table, the default, Table I's
 # -w R_j; task, an option since 2026-11-01, in folders ..._taskconflict; either folder takes
 # every pairing without conflict from the other and rolls out the conflict pairings alone),
+# HAZARD, SOCIAL_HAZARD, HAND_HAZARD (since 2026-11-02; Config.goal_hazard, social_hazard,
+# hand_hazard, default 0: the partner's goal may change -- after every update the belief about
+# it is mixed with the uniform, (1 - H) b + H u, Baker, Saxe & Tenenbaum 2009's model M2; HAND_HAZARD
+# once at its pick-ups and places, before their evidence; folders ..._hazard<H>,
+# ..._socialhazard<H>, ..._handhazard<H>),
 # SCENE (default two), STEPS (default 60), NOVIDEO (default 1:
 # records only -- 1225 x 3 videos is a lot; NOVIDEO=0 draws them), LOGS (default
 # logs/tau_grid), OUT (default output/tau_grid), PYTHON (default python3).
@@ -60,6 +66,9 @@ FLAGS="--levels 2 2 --objects inferred --steal --foreign-carry-cost 1 --inertia 
 [ "${SWAP:-1}" = 1 ] && FLAGS="$FLAGS --swap"      # SWAP=0: no swaps on a place (folders without _swap)
 [ -n "$PHYS" ] && FLAGS="$FLAGS --physical-likelihood $PHYS"
 [ -n "$CONFLICT" ] && FLAGS="$FLAGS --conflict $CONFLICT"
+[ -n "$HAZARD" ] && FLAGS="$FLAGS --goal-hazard $HAZARD"          # the partner's goal may change (folders _hazard<H>)
+[ -n "$SOCIAL_HAZARD" ] && FLAGS="$FLAGS --social-hazard $SOCIAL_HAZARD"
+[ -n "$HAND_HAZARD" ] && FLAGS="$FLAGS --hand-hazard $HAND_HAZARD"
 [ -n "$MEM" ] && FLAGS="$FLAGS --max-memory-gib $MEM"   # (not in the folder name: same model)
 EXTRA="--scene ${SCENE:-two} --steps ${STEPS:-60}"
 [ "${NOVIDEO:-1}" = 1 ] && EXTRA="$EXTRA --no-video"

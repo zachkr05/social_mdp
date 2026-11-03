@@ -1,5 +1,19 @@
 # All 49 pairings: the belief update of Eqs. 5-6 as the authors' solver keeps them (2026-10-30), nothing automatic, a pick-up of three transitions, two posteriors by the hands, five hand actions, the hinderer without a goal of its own, inertia
 
+## The partner's goal may change: a hazard (options, 2026-11-02)
+
+Off by default. `HAZARD=h` mixes each robot's belief about its partner's object or
+destination with the uniform after every update, $(1-h)\,b + h\,u$ (Baker, Saxe & Tenenbaum
+2009, M2): no hypothesis falls below $h$ / their number, so a belief crushed by a few
+surprising moves comes back in a few, and one that nothing supports fades. `SOCIAL_HAZARD=h`
+does the same for the social goal; `HAND_HAZARD=h` mixes, once, the belief about the partner's
+object before its pick-up and the one about its destination before its place (1: forgotten).
+Folders `..._hazard<h>`, `..._socialhazard<h>`, `..._handhazard<h>`; README, "The partner's
+goal may change".
+
+    SAME=1 TAUS="0.1 0.3 0.5" HAZARD=0.02 sh run_tau_grid.sh
+    SAME=1 TAUS="0.1 0.3 0.5" SCENE=spare2 SWAP=0 MEM=30 HAZARD=0.02 sh run_tau_grid.sh   # with the decoys
+
 ## Task conflict: an option (2026-11-01, evening)
 
 Conflict is Table I's, $-w\,\tilde R_j$ above level 1: the default, as before. The task

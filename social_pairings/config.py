@@ -78,6 +78,9 @@ ADDED_FIELDS = dict(
     physical_likelihood="level0",  # 2026-10-30 (a record of before is never that of now anyway)
     robot_temperatures=None,       # 2026-11-01 (until then one tau for both robots)
     conflict="table",              # 2026-11-01 (evening; the default again, as before)
+    goal_hazard=0.0,               # 2026-11-02 (the partner's goal never changed)
+    social_hazard=0.0,             # 2026-11-02
+    hand_hazard=0.0,               # 2026-11-02
 )
 
 
@@ -419,6 +422,38 @@ class Config:
     # level-1 models hold about the robot, by the robot's hands.  False: Eq. 6 with the
     # likelihood of each (object, destination) hypothesis as it is, as until 2026-10-17.
     belief_stages: bool = True
+    # The partner's goal may change (since 2026-11-02; the user: "lets go ahead and implement
+    # this").  Baker, Saxe & Tenenbaum (2009), "Action understanding as inverse planning",
+    # Cognition, model M2 ("changing goals"): after every update a posterior about the partner
+    # is mixed with the uniform over the hypotheses it still holds possible,
+    #     b <- (1 - h) b + h / |support|,
+    # the prediction step of a filter whose hidden goal is redrawn from the prior with
+    # probability h at every transition.  No hypothesis then falls below h / |support|, so one
+    # that a run of surprising moves has crushed comes back within the few moves the evidence
+    # needs from there -- not as many as it took against it (at tau 0.1 a move that a
+    # hypothesis rates one move's cost worse multiplies it by e^-10); and a belief that no
+    # evidence keeps up fades toward the uniform, at a rate h a transition.  It does not soften
+    # what one move does: that is tau.  Physical posterior (goal_hazard): under belief_stages
+    # the factor the partner's next action speaks to -- which object it wants while its hands
+    # are empty, the destination given the object while it holds (or lifts) one; the other
+    # factor stays where it was, as the stages keep it.  Without the stages, the whole
+    # (object, destination) posterior.  Social posterior (social_hazard): all of it.  The
+    # hypotheses the hands' outcomes ruled out (Eq. 5's transition term) stay out.  0: the
+    # goal never changes (the paper's M1), the update of before; 1: only the last action
+    # counts (the paper's heuristic H).  The paper's fits to people: h = 0.25 a step for
+    # online goal inference (at beta = 2 per move's cost, i.e. tau = 0.5 c(move)), 0.65 for
+    # retrospective.  Not while the partner lifts (no update then).
+    goal_hazard: float = 0.0
+    social_hazard: float = 0.0
+    # The same at the partner's hand actions, one transition, BEFORE the action's own evidence
+    # (the user, 2026-11-02: "when they pickup an object we forget our posterior on the object
+    # and when they place an object we forget our posterior on goal placement locations"):
+    # at a pick-up or a take, the belief about which object it wants is mixed toward the
+    # uniform with weight hand_hazard; at a place, a give or a swap, the belief about its
+    # destination (under belief_stages; without them, the whole physical posterior).  The pick
+    # or the place then counts in full.  1: the evidence before it forgotten altogether; 0:
+    # nothing at the hands (goal_hazard still applies).
+    hand_hazard: float = 0.0
     # (The devices of before, gone since 2026-10-30 and kept only so that the records of
     # before can be read -- BELIEF_DEVICES, written_with.  Asking for any of them raises.)
     # a lapse (1 - e) psi_k + e uniform in the likelihood
@@ -576,6 +611,13 @@ class Config:
             raise ValueError("park_prior must lie in [0, 1]")
         if not 0.0 <= self.idle_hazard <= 0.5:
             raise ValueError("idle_hazard must lie in [0, 0.5]")
+        for name in ("goal_hazard", "social_hazard", "hand_hazard"):
+            value = getattr(self, name)
+            if (isinstance(value, (bool, np.bool_))
+                    or not isinstance(value, (int, float, np.integer, np.floating))
+                    or not 0.0 <= float(value) <= 1.0):
+                raise ValueError(f"{name} must be a number in [0, 1] (the probability that "
+                                 f"the partner's goal is redrawn)")
         if not 0.0 <= self.pi_forcing < 1.0:
             raise ValueError("pi_forcing must lie in [0, 1)")
         for name, low in (("done_tail", 0), ("num_threads", 0), ("debug_every", 0),

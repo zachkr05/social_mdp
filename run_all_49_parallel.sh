@@ -15,6 +15,9 @@
 # CONFLICT (Config.conflict: table, the default -- Table I's -w R_j; task -- an option since
 # 2026-11-01, a level-2 conflict robot paid -w r(g_j) against every partner, in folders
 # ..._taskconflict; either folder takes every pairing without conflict from the other),
+# HAZARD, SOCIAL_HAZARD, HAND_HAZARD (since 2026-11-02, default 0: the partner's goal may
+# change, Baker et al. 2009's M2 -- Config.goal_hazard, social_hazard, hand_hazard; folders
+# ..._hazard<H>, ..._socialhazard<H>, ..._handhazard<H>),
 # OUTPUT (default: the folder named after the options, under output/), NOVIDEO=1 (records only),
 # PYTHON (default python3).
 set -e
@@ -23,6 +26,9 @@ FLAGS="--levels 2 2 --objects inferred --swap --steal --foreign-carry-cost 1 --i
 [ -n "$TAU" ] && FLAGS="$FLAGS --temperature $TAU"      # Eq. 7's tau (default 0.2), one or one per robot
 [ -n "$PHYS" ] && FLAGS="$FLAGS --physical-likelihood $PHYS"   # level1 (Eq. 6 as printed, default) or level0 (the authors' code)
 [ -n "$CONFLICT" ] && FLAGS="$FLAGS --conflict $CONFLICT"   # table (default, Table I's -R_j) or task
+[ -n "$HAZARD" ] && FLAGS="$FLAGS --goal-hazard $HAZARD"   # the partner's goal may change (2026-11-02)
+[ -n "$SOCIAL_HAZARD" ] && FLAGS="$FLAGS --social-hazard $SOCIAL_HAZARD"
+[ -n "$HAND_HAZARD" ] && FLAGS="$FLAGS --hand-hazard $HAND_HAZARD"
 EXTRA="--scene ${SCENE:-two} --steps ${STEPS:-60}"
 [ -n "$OUTPUT" ] && EXTRA="$EXTRA --output $OUTPUT"
 [ "${NOVIDEO:-0}" = 1 ] && EXTRA="$EXTRA --no-video"

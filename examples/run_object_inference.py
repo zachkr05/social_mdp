@@ -58,7 +58,11 @@ Table I's entry at l = 1, against every partner, to ``..._taskconflict`` -- the 
 the table as printed, ``-w R_j``, in the folder without the suffix.  Only a pairing with a
 level-2 conflict robot changes with the reading, so ``--resume`` in either folder takes
 every other pairing's record (and its videos) from the other, where one was made with the
-options asked for, and rolls out the pairings with conflict alone):
+options asked for, and rolls out the pairings with conflict alone); ``--goal-hazard H``,
+``--social-hazard H`` and ``--hand-hazard H`` (options since 2026-11-02, 0 by default: the
+partner's goal may change, Baker, Saxe & Tenenbaum 2009's model M2) to ``..._hazard<H>``,
+``..._socialhazard<H>`` and ``..._handhazard<H>``, after ``_eq56`` and before
+``_taskconflict``:
 per rollout ``<pairing>__<objects>.json`` and ``.mp4`` (an MP4 video); ``summary.json``;
 ``results.md``
 (the finishes; what each robot ended up believing of its partner's object, destination and
@@ -150,6 +154,13 @@ def stem(pair) -> str:
 
 # options a record may differ in and still be the rollout asked for: the machine's
 MACHINE = ("num_threads", "max_memory_gib", "verbose")
+# the hazards of the partner's goal (2026-11-02), as the video titles and the tables name them
+HAZARD_LABELS = dict(goal_hazard="hazard", social_hazard="social hazard",
+                     hand_hazard="hand hazard")
+HAZARD_TEXT = dict(goal_hazard="the partner's goal may change: a hazard a transition (Baker, "
+                               "Saxe & Tenenbaum 2009, M2) of",
+                   social_hazard="its social goal likewise, a hazard of",
+                   hand_hazard="at its pick-ups and places a hazard of")
 
 
 def unkept(result: dict, cfg: Config, pair, levels) -> Optional[str]:
@@ -438,6 +449,23 @@ def main() -> None:
                              "2026-11-01): -w r(g_j), Table I's entry at l = 1, against every "
                              "partner -- it does its own task and works against its partner's "
                              "(folders ..._taskconflict)")
+    parser.add_argument("--goal-hazard", type=float, default=0.0, metavar="H",
+                        help="Config.goal_hazard (since 2026-11-02): the partner's goal may "
+                             "change -- after every update the belief about its object or "
+                             "destination (the factor its next action speaks to) is mixed with "
+                             "the uniform, (1 - H) b + H u (Baker, Saxe & Tenenbaum 2009, M2).  "
+                             "No hypothesis falls below H / their number, so a crushed one comes "
+                             "back in a few moves.  Default 0: the update of before (folders "
+                             "..._hazard<H>)")
+    parser.add_argument("--social-hazard", type=float, default=0.0, metavar="H",
+                        help="Config.social_hazard: the same for the belief about the partner's "
+                             "social goal (default 0; folders ..._socialhazard<H>)")
+    parser.add_argument("--hand-hazard", type=float, default=0.0, metavar="H",
+                        help="Config.hand_hazard: at the partner's pick-up or take, the belief "
+                             "about its object is mixed toward the uniform by H before the "
+                             "action's evidence; at its place, give or swap, the belief about "
+                             "its destination (1: forgotten altogether; default 0; folders "
+                             "..._handhazard<H>)")
     args = parser.parse_args()
     taus = None if args.temperature is None else tuple(args.temperature)
     if taus is not None and len(taus) not in (1, 2):
@@ -477,6 +505,14 @@ def main() -> None:
     if args.physical_likelihood is not None:
         options = dict(options, physical_likelihood=args.physical_likelihood)
     options = dict(options, conflict=args.conflict)        # (2026-11-01: summary.json says it)
+    # the partner's goal may change (2026-11-02): 0 (none) is the default and the folders of
+    # before; a hazard names its folder
+    hazards = tuple((key, flag, float(value)) for key, flag, value in
+                    (("goal_hazard", "hazard", args.goal_hazard),
+                     ("social_hazard", "socialhazard", args.social_hazard),
+                     ("hand_hazard", "handhazard", args.hand_hazard)) if value)
+    for key, _, value in hazards:
+        options = dict(options, **{key: value})
     if args.max_memory_gib is not None:         # (not in the folder name: same model)
         options = dict(options, max_memory_gib=args.max_memory_gib)
     if args.verbose:
@@ -509,8 +545,10 @@ def main() -> None:
            + ("_staged" if staged else "")       # two posteriors by the hands (2026-10-17)
            + byhand              # nothing automatic, a pick-up of three (2026-10-18)
            + "_eq56"             # Eqs. 5-6 as the authors' solver keeps them (2026-10-30)
-           + ("l0" if Config(**options).physical_likelihood == "level0" else ""))
-    #        (... with the physical posterior on the level-0 policies, the authors' code)
+           + ("l0" if Config(**options).physical_likelihood == "level0" else "")
+           + "".join(f"_{flag}{value:g}" for _, flag, value in hazards))
+    #        (... with the physical posterior on the level-0 policies, the authors' code; and
+    #        the hazards of the partner's goal, 2026-11-02)
     task = Config(**options).conflict == "task"
     # --conflict task: a level-2 conflict robot paid -w r(g_j) against every partner
     # (2026-11-01), in ..._taskconflict.  The folder of the same options under the other
@@ -572,7 +610,9 @@ def main() -> None:
                                     + ("" if carry is None else f"     carry {carry:g}")
                                     + ("     hinder: no own goal" if spoiler else "")
                                     + ("" if inertia is None else f"     inertia {inertia:g}")
-                                    + ("     two posteriors" if staged else ""))
+                                    + ("     two posteriors" if staged else "")
+                                    + "".join(f"     {HAZARD_LABELS[key]} {value:g}"
+                                              for key, _, value in hazards))
     title = (f"Which object the partner wants, inferred or known: {scene.name} scene, w = 1 / 1"
              + ("" if args.max_objects is None else f", {args.max_objects} objects in the model")
              + ("" if G.cooperation_reading(rule) == "Table I"
@@ -594,7 +634,8 @@ def main() -> None:
                 f", inertia: no undoing the last action unless it is worth {inertia:g} x a "
                 f"move's cost more than the next best")
              + (", two posteriors by the partner's hands (its object while it holds nothing, "
-                "its destination while it holds an object)" if staged else ""))
+                "its destination while it holds an object)" if staged else "")
+             + "".join(f", {HAZARD_TEXT[key]} {value:g}" for key, _, value in hazards))
     (out / "results.md").write_text(table(rows, title))
     draw(records, title, out / "results.png")
     summary = dict(scene=scene.to_json(), options=options, weights=(1.0, 1.0),

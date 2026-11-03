@@ -112,6 +112,22 @@ def _log_mix(log_a: np.ndarray, wa: float, log_b, wb: float) -> np.ndarray:
         return np.logaddexp(la, lb)
 
 
+def mix_uniform(log_b: np.ndarray, h: float) -> np.ndarray:
+    """log((1 - h) b + h u): the distribution ``exp(log_b)`` (normalised here) mixed with the
+    uniform u over its support, its finite entries; the others stay -inf (Config.goal_hazard:
+    a goal redrawn from the prior with probability h -- Baker, Saxe & Tenenbaum 2009, M2 --
+    among the hypotheses still held possible).  h = 0: b as it is; h = 1: u."""
+    log_b = np.asarray(log_b, dtype=np.float64)
+    sup = np.isfinite(log_b)
+    n = int(sup.sum())
+    if n == 0:
+        return log_b.copy()
+    out = np.full(log_b.shape, -np.inf)
+    with np.errstate(divide="ignore"):
+        out[sup] = np.logaddexp(np.log1p(-h) + normalize_log(log_b[sup]), np.log(h / n))
+    return out
+
+
 class ModelBank:
     """Stacked arrays of the models of one reasoning level.
 
@@ -1251,6 +1267,42 @@ class SocialMDP:
         object, about its destination (and social goal), not its object."""
         return int(self.w.hold[self.w.unsid(s)[2], j]) < 0
 
+    def _holds_next(self, j: int, nxt) -> bool:
+        """Will robot j's next action be read with an object in its hands (the next update's
+        stage)?  ``nxt`` is the joint state just reached, as a tuple: robot j holds an object
+        there, or it lifts one (busy -- the update after the lift finds the object in its
+        hands)."""
+        return int(self.w.hold[nxt[2], j]) >= 0 or bool(self.w.busy[nxt[2], j])
+
+    def hazard_phys(self, j: int, log_phys: np.ndarray, h: float, objects: bool) -> np.ndarray:
+        """The physical posterior about robot j mixed toward the uniform with weight h
+        (Config.goal_hazard, Config.hand_hazard) -- under Config.belief_stages one factor of
+        it: the object (``objects``; the destination given each object stays as it is) or the
+        destination given each object (the object's mass stays as it is), the factor the
+        partner's actions speak to in that stage.  Without the stages, the whole (object,
+        destination) posterior.  The hypotheses ruled out stay out."""
+        if h <= 0.0:
+            return log_phys
+        log_phys = normalize_log(np.asarray(log_phys, dtype=np.float64))
+        if not self.cfg.belief_stages:
+            return mix_uniform(log_phys, h)
+        obj = self.pg_obj[j]
+        out = log_phys.copy()
+        groups = np.unique(obj)
+        mass = np.array([_log_sum(log_phys[obj == q]) for q in groups])
+        if objects:                      # the object's mass, the destination given it kept
+            new_mass = mix_uniform(mass, h)
+            for q, m, m_new in zip(groups, mass, new_mass):
+                if np.isfinite(m):
+                    sel = obj == q
+                    out[sel] = log_phys[sel] - m + m_new
+        else:                            # the destination given each object, its mass kept
+            for q, m in zip(groups, mass):
+                if np.isfinite(m):
+                    sel = obj == q
+                    out[sel] = mix_uniform(log_phys[sel] - m, h) + m
+        return out
+
     def staged_log_likelihood(self, j: int, log_phys: np.ndarray, log_lik: np.ndarray,
                               empty: bool) -> np.ndarray:
         """``Config.belief_stages``: ``log_lik`` (PG,) of the physical hypotheses with, while
@@ -1300,7 +1352,14 @@ class SocialMDP:
         keeps (Eq. 5); the idle mode (``Config.idle_hypothesis``) as a two-mode filter over
         both; and Eq. 5's transition term.  Nothing is learnt from an action that no
         hypothesis explains (the prior stands, but for what the transition term rules out);
-        nothing while robot j lifts an object ("pick" is the one action open to it)."""
+        nothing while robot j lifts an object ("pick" is the one action open to it).
+
+        The partner's goal may change (since 2026-11-02, options, 0 by default):
+        ``Config.hand_hazard`` mixes the factor of the physical prior a hand action speaks to
+        toward the uniform before that action's evidence (its object at a pick-up or a take,
+        its destination at a place, a give or a swap); ``Config.goal_hazard`` and
+        ``social_hazard`` mix the posteriors after the update, the prediction step for the
+        next transition (:meth:`hazard_phys`, :func:`mix_uniform`)."""
         cfg, w = self.cfg, self.w
         old = self.about[j]
         new = old.copy()
@@ -1311,8 +1370,16 @@ class SocialMDP:
         q0 = float(old.idle)
         l_idle = self._log_idle(j, s, a)
         empty = self._stage(j, s)
+        # the prior of this update: before a hand action's evidence, the factor it speaks to
+        # mixed toward the uniform (Config.hand_hazard; a hand action is open to robot j only
+        # in the stage it speaks to: pick and take with empty hands, place, give and swap
+        # holding an object)
+        prior = old.log_phys
+        if cfg.hand_hazard > 0.0 and a >= PICK:
+            prior = self.hazard_phys(j, prior, cfg.hand_hazard, objects=empty)
+            new.log_phys = prior.copy()
         # ---- the physical posterior (Eq. 6) ---------------------------------------------------
-        log_pol = (self.hypothesis_log_policies(j, s, a, old.log_phys)
+        log_pol = (self.hypothesis_log_policies(j, s, a, prior)
                    if old.log_social is not None else None)
         if cfg.physical_likelihood == "level1" and log_pol is not None:
             # the paper's Eq. 6 as printed: the level-1 models' likelihood, averaged over
@@ -1321,24 +1388,24 @@ class SocialMDP:
                 raw = np.array([_log_sum(old.log_social + log_pol[g]) for g in range(self.PG)])
         else:                                    # the authors' code: the level-0 policies
             raw = self.physical_log_likelihood(j, s, a)
-        lik = self.staged_log_likelihood(j, old.log_phys, raw, empty)
+        lik = self.staged_log_likelihood(j, prior, raw, empty)
         mix = _log_mix(lik, 1.0 - q0, l_idle, q0)                  # (PG,) log P(a | g)
         keep = self.transition_term(j, s, actions, nxt, event)
         with np.errstate(invalid="ignore"):
-            post = np.where(keep, old.log_phys + mix, -np.inf)
+            post = np.where(keep, prior + mix, -np.inf)
         explained = np.isfinite(post).any()
         if not explained:                        # nothing explains the action: the prior,
-            post = np.where(keep, old.log_phys, -np.inf)   # less what the hands ruled out
+            post = np.where(keep, prior, -np.inf)          # less what the hands ruled out
         if np.isfinite(post).any():
-            new.log_phys = self._renormalize_stage(j, post, old.log_phys, empty)
+            new.log_phys = self._renormalize_stage(j, post, prior, empty)
         # the physical prior over the goals the transition term keeps (T(s^t | s^{t-1}, a)
         # is the same under every social goal given the physical one): what the idle mode
         # and the social goals are judged against
-        kept = np.where(keep, old.log_phys, -np.inf)
+        kept = np.where(keep, prior, -np.inf)
         if np.isfinite(kept).any():
             kept = normalize_log(kept)
         else:
-            kept = old.log_phys
+            kept = prior
         # ---- the idle mode ---------------------------------------------------------------------
         if cfg.idle_hypothesis:
             if explained:
@@ -1357,6 +1424,15 @@ class SocialMDP:
             post = old.log_social + _log_mix(l_soc, 1.0 - q0, l_idle, q0)
             if np.isfinite(post).any():
                 new.log_social = normalize_log(post)
+        # ---- the partner's goal may change: the prediction step for the next transition ------
+        # (Config.goal_hazard, social_hazard; Baker, Saxe & Tenenbaum 2009, M2): each
+        # posterior mixed toward the uniform over the hypotheses it still holds possible --
+        # under the stages the physical one in the factor the next action will speak to
+        if cfg.goal_hazard > 0.0:
+            new.log_phys = self.hazard_phys(j, new.log_phys, cfg.goal_hazard,
+                                            objects=not self._holds_next(j, nxt))
+        if cfg.social_hazard > 0.0 and new.log_social is not None and not self.known_social:
+            new.log_social = mix_uniform(new.log_social, cfg.social_hazard)
         return new
 
     def observe(self, actions, s: int, nxt, event: dict) -> None:

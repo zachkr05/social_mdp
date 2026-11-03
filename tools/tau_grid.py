@@ -59,6 +59,9 @@ def read(folders) -> list:
         scene = (summary.get("scene") or {}).get("name", "")
         # Config.conflict (since 2026-11-01; a folder of before: Table I's)
         reading = (summary.get("options") or {}).get("conflict", "table")
+        # the hazards of the partner's goal (since 2026-11-02; a folder of before: none)
+        hazards = tuple(float((summary.get("options") or {}).get(k, 0.0))
+                        for k in ("goal_hazard", "social_hazard", "hand_hazard"))
         for r in summary["rows"]:
             if r.get("objects", "inferred") != "inferred":
                 continue
@@ -67,19 +70,26 @@ def read(folders) -> list:
                              tau_2=t2, done_1=r["done_at"][0], done_2=r["done_at"][1],
                              goal_1=bool(own[0]), goal_2=bool(own[1]), steps=r["steps"],
                              stopped_by=r["stopped_by"], scene=scene, conflict=reading,
-                             folder=str(folder)))
+                             hazards=hazards, folder=str(folder)))
     return rows
 
 
 def scene_of(rows) -> str:
     """The scene, and the reading of conflict where a folder was made under the task
     conflict of 2026-11-01 (Config.conflict; Table I's, the reading of before, is not
-    named)."""
+    named), and the hazards of the partner's goal where there are any (2026-11-02)."""
     readings = {r.get("conflict", "table") for r in rows}
-    if readings == {"table"}:
-        return rows[0]["scene"]
-    return rows[0]["scene"] + (", task conflict" if readings == {"task"}
-                               else ", task and Table I conflict mixed")
+    name = rows[0]["scene"]
+    if readings != {"table"}:
+        name += (", task conflict" if readings == {"task"}
+                 else ", task and Table I conflict mixed")
+    hazards = {tuple(r.get("hazards") or (0.0, 0.0, 0.0)) for r in rows}
+    if len(hazards) > 1:
+        name += ", hazards mixed"
+    else:
+        name += "".join(f", {what} {h:g}" for what, h in
+                        zip(("hazard", "social hazard", "hand hazard"), hazards.pop()) if h)
+    return name
 
 
 def axes_of(rows) -> tuple:

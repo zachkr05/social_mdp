@@ -24,7 +24,13 @@ TAU=0.15 sh run_all_49_parallel.sh                           # the 49 pairings
 TAU="0.2 0.5" sh run_all_49_parallel.sh                      # ... agent_1 at tau 0.2, agent_2 at 0.5
 sh run_tau_grid.sh                                           # ... at every pair of taus 0.1-0.5
 CONFLICT=task sh run_all_49_parallel.sh                      # ... with the task conflict, -w r(g_j)
+SAME=1 TAUS="0.1 0.3 0.5" HAZARD=0.02 sh run_tau_grid.sh     # ... the partner's goal may change
 ```
+
+Since 2026-11-02 the partner's goal may change, as an option (off by default): `HAZARD=h`
+mixes the belief about it with the uniform after every update, so that a crushed hypothesis
+can come back (Baker, Saxe & Tenenbaum 2009's model M2; `social_pairings/README.md`, "The
+partner's goal may change").
 
 Conflict is Table I's, $-w\,\tilde R_j$ above level 1. Since 2026-11-01 (evening) the task
 conflict, $R_i = r(g_i) - w\,r(\tilde g_j) - c(a_i)$ against every partner, is an option:

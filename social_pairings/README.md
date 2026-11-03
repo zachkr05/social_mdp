@@ -156,6 +156,72 @@ The package is self-contained. It shares no code with `social_mdp/` in the same 
 experiment engine behind `run_experiment`, the ablation arms and the congruence scores): it does
 one thing, roll out a pairing of social goals and say what happened.
 
+## The partner's goal may change: a hazard (options, since 2026-11-02)
+
+The user: "Ok lets go ahead an implement this: A better cure for locked-in beliefs is a hazard
+rather than a reset". Three options, all 0 by default (the update of before, every folder of
+before kept by `--resume`): `Config.goal_hazard`, `social_hazard` and `hand_hazard`
+(`--goal-hazard`, `--social-hazard`, `--hand-hazard`; `HAZARD`, `SOCIAL_HAZARD`,
+`HAND_HAZARD` in the scripts).
+
+**The model.** Baker, Saxe & Tenenbaum (2009), "Action understanding as inverse planning",
+*Cognition*, model M2 ("changing goals"): the partner's hidden goal is redrawn from the prior
+with probability $h$ at every step. Filtering that, each posterior gets a prediction step
+after its update,
+
+$$b(g) \leftarrow (1-h)\,b(g) + \frac{h}{|S|},$$
+
+with $S$ the hypotheses it still holds possible: the ones the hands' outcomes ruled out (Eq.
+5's transition term) stay out. $h = 0$ is the paper's M1 (a fixed goal), the update of before;
+$h = 1$ its heuristic H (only the last action counts).
+
+**Why.** At $\tau = 0.1\,c(\text{move})$ a move that a hypothesis rates one move's cost worse
+multiplies it by $e^{-10}$, and every such move digs deeper: after three of them a 98 % belief
+is at $6 \times 10^{-12}$ and needs ten moves in its favour (each ×20, as at transitions 9-10
+of coercion / hinder, 2026-11-02) to be back above 90 %. Under a hazard of 0.02 it never falls
+below $h/|S|$ (0.5 % with four objects) and is back in three, however deep it went. A belief
+that no evidence keeps up fades toward the uniform at a rate $h$ a transition: red's "green
+wants O4" (0.62) in hinder / exchange, which green's moves say nothing about while red reads
+green as a hinderer, would be halfway to 0.25 in about 35 transitions at 0.02, 7 at 0.1. What
+the hazard does not do is soften what one move does: that is $\tau$ (the paper's best fit to
+people's online goal inferences was $\beta = 2$ per move's cost, i.e. $\tau = 0.5\,c(\text{move})$,
+with $h = 0.25$; for retrospective inferences $\beta = 0.5$, $h = 0.65$).
+
+**Where.** `goal_hazard`, on the physical posterior: under `belief_stages` (the default) the
+factor the partner's next action speaks to -- which object it wants while its hands are empty,
+the destination given each object while it holds an object or lifts one -- the other factor
+staying where it was, as the stages keep it (a belief about the object does not leak away
+while the partner carries the object, with nothing to bring it back). Without the stages, the
+whole (object, destination) posterior. `social_hazard`, on the social posterior, all of it.
+Both after every update, i.e. in the beliefs the robots plan with and the videos show; none
+while the partner lifts (there is no update then). `hand_hazard`, the user's "when they pickup
+an object we forget our posterior on the object and when they place an object we forget our
+posterior on goal placement locations", made partial: before the evidence of the partner's
+pick or take, its object factor is mixed with weight `hand_hazard`; before that of its place,
+give or swap, its destination factor. The hand action's own evidence then counts in full. 1
+forgets what came before altogether.
+
+**Folders.** `..._hazard<H>`, `..._socialhazard<H>`, `..._handhazard<H>` after `_eq56` (and
+before `_taskconflict`). The titles name them ("hazard 0.02"). `models.mix_uniform`,
+`SocialMDP.hazard_phys`.
+
+    SAME=1 TAUS="0.1 0.3 0.5" HAZARD=0.02 sh run_tau_grid.sh                      # the physical posterior
+    SAME=1 TAUS="0.1 0.3 0.5" HAZARD=0.02 SOCIAL_HAZARD=0.02 sh run_tau_grid.sh   # ... and the social one
+    SAME=1 TAUS="0.1" HAZARD=0.02 HAND_HAZARD=0.5 sh run_tau_grid.sh              # ... and half forgotten at the hands
+
+**Checked** (`tests/test_hazard.py`, 33 s): the option and the records of before; the mixing
+against its definition (normalised, the floor, the ruled-out hypotheses out, $h = 1$ uniform)
+and the two factors (each keeps the other); the engine's update with all three hazards against
+the reference of `test_beliefs.py` with the mixing written out, from random beliefs, with empty
+hands, at a pick-up, holding an object (moves, place, give) and without the stages; lifting
+still tells nothing; the arithmetic above; eight transitions of the 3 x 3 map against the
+reference. `test_beliefs.py` passes unchanged (0 is the update of before). The script on the
+3 x 3 map with all three on: the folder named, the floors in the record, `--resume` keeping it.
+Run with it when handed over, all passed (99 tests, 7 min): `test_hazard`, `test_beliefs`,
+`test_defaults.TheDefaults`, `test_conflict` (`Terms`, `Option`, `Resume`),
+`test_temperatures.Option`, `test_goals`, `test_render` (`HeadlineTests`, `OldRecordTests`,
+`TextTests`). Not run: the rest of the suite and any rollout of the two-room scenes.
+
 ## Task conflict (option, since 2026-11-01, evening)
 
 The user: "Ok lets implement this: Option 1: task conflict ... $R_{\text{conflict}} = r(g_i) -
@@ -3869,6 +3935,7 @@ every mix of levels ("Results").
 | `pick_cost_rate` | `3.0` | $c(\text{pick})$ in moves' worth, on the first transition of a lift; 1.0 until 2026-10-18 |
 | `use_cost_rate` | `2.0` | $c(\text{place})$, $c(\text{take})$, $c(\text{give})$, $c(\text{swap})$ in moves' worth; 1.0 until 2026-10-18 |
 | `belief_stages` | `True` | the physical posterior in two stages, by the partner's hands: while the partner holds nothing, its actions are evidence about which object it wants and none about its destination; while it holds an object, about its destination and none about its object ("Two posteriors, by the partner's hands"; since 2026-10-17; the social posterior is updated either way). `False`: every (object, destination) hypothesis by its own likelihood at every action, as until then (in `TOLD`) |
+| `goal_hazard`, `social_hazard`, `hand_hazard` | `0`, `0`, `0` | the partner's goal may change (Baker, Saxe & Tenenbaum 2009, M2; since 2026-11-02): after every update the physical posterior (in the factor the partner's next action speaks to) and the social posterior are mixed with the uniform over the hypotheses they hold possible, $(1-h)\,b + h/|S|$, so that no hypothesis falls below $h/|S|$; `hand_hazard` mixes, once, the object factor before the partner's pick or take and the destination factor before its place, give or swap ("The partner's goal may change"). 0: the update of before |
 | `value_tol` | `1e-4` | every solve is certified to $\lvert V - V^*\rvert \le$ this |
 
 `weights=` of `run_pairing` scales each robot's social term, $R_i = r(g_i) - c(a_i) +

@@ -22,8 +22,10 @@
 # Environment: PAIR (default "hinder coercion"), TAU (default 0.15), MEM (GiB the solver may
 # use; default 90 % of the machine's memory), THREADS (default 0 = every CPU), STEPS
 # (default 60), SWAP (default 1; 0 = no swaps, the folder then lacks _swap), PHYS
-# (Config.physical_likelihood: level1 default, level0 the authors' estimator), PYTHON
-# (default python3).
+# (Config.physical_likelihood: level1 default, level0 the authors' estimator), CONFLICT
+# (Config.conflict), HAZARD, SOCIAL_HAZARD, HAND_HAZARD (since 2026-11-02, default 0: the
+# partner's goal may change -- README, "The partner's goal may change"; the log then names
+# them), PYTHON (default python3).
 set -e
 PY=${PYTHON:-python3}
 PAIR=${PAIR:-hinder coercion}
@@ -35,8 +37,14 @@ echo "machine: $MACHINE GiB; the solver may use $MEM GiB (the model needs about 
 FLAGS="--scene spare2 --steps ${STEPS:-60} --levels 2 2 --objects inferred --steal --foreign-carry-cost 1 --inertia 1 --pick-cost 2 --temperature ${TAU:-0.15}"
 [ "${SWAP:-1}" = 1 ] && FLAGS="$FLAGS --swap"   # SWAP=0: no swaps (718 configurations, ~24 GiB, ~8x faster)
 [ -n "$PHYS" ] && FLAGS="$FLAGS --physical-likelihood $PHYS"
+[ -n "$CONFLICT" ] && FLAGS="$FLAGS --conflict $CONFLICT"
+# the partner's goal may change (2026-11-02; Config.goal_hazard, social_hazard, hand_hazard)
+TAG=""
+[ -n "$HAZARD" ] && FLAGS="$FLAGS --goal-hazard $HAZARD" && TAG="${TAG}_hazard$HAZARD"
+[ -n "$SOCIAL_HAZARD" ] && FLAGS="$FLAGS --social-hazard $SOCIAL_HAZARD" && TAG="${TAG}_socialhazard$SOCIAL_HAZARD"
+[ -n "$HAND_HAZARD" ] && FLAGS="$FLAGS --hand-hazard $HAND_HAZARD" && TAG="${TAG}_handhazard$HAND_HAZARD"
 mkdir -p logs
-LOG=logs/spare2_$(echo "$PAIR" | tr ' ' '_').log
+LOG=logs/spare2_$(echo "$PAIR" | tr ' ' '_')$TAG.log
 echo "progress: $LOG (a line per transition)"
 $PY examples/run_object_inference.py $FLAGS --pairing $PAIR --threads "${THREADS:-0}" \
   --max-memory-gib "$MEM" --verbose --resume 2>&1 | tee "$LOG"
