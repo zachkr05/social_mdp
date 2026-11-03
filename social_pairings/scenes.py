@@ -6,7 +6,8 @@ from typing import Optional, Sequence, Tuple, Union
 
 import numpy as np
 
-__all__ = ["Scene", "six_object_scene", "two_room_scene", "exchange_scene"]
+__all__ = ["Scene", "six_object_scene", "two_room_scene", "exchange_scene", "gate_scene",
+           "GATE_MAP"]
 
 Cell = Tuple[int, int]
 
@@ -122,3 +123,73 @@ def exchange_scene(rooms: bool = True, handoff: bool = True) -> Scene:
                  objects=base.objects, name="exchange",
                  handoff_cells=(door,) if handoff else (),
                  rooms=(left, right) if rooms else None)
+
+
+# The gate scene (2026-11-02), as drawn: row 0 at the top.  1, 2 the starts; a, b robot 0's
+# and robot 1's objects, each next to the partner; A, B their destinations, each at home;
+# * the other candidate destinations; G the one-cell gate between the rooms; d the optional
+# decoy, in the long way round along the bottom (12 moves from door to door, 2 through G).
+GATE_MAP = (
+    "###########",
+    "#A*..#..*B#",
+    "#1b..G..a2#",
+    "#*...#...*#",
+    "###.###.###",
+    "###..d..###",
+    "###########",
+)
+
+
+def gate_scene(handoff: str = "anywhere", decoy: bool = False) -> Scene:
+    """Two 3 x 4 rooms joined by a one-cell gate and a long way round (:data:`GATE_MAP`),
+    mirror-symmetric.  Each robot starts next to its partner's object; its own destination
+    is at home, among two other candidates.  Doing its task alone takes a robot about 19
+    transitions (cross, fetch, lift, come back, place), helped through the gate about 13;
+    whoever stands in the gate, or next to it on either side, blocks the short way (2 moves)
+    and sends the partner round (12).
+
+    handoff : where an object may be put down (besides its owner's destination, and its own
+        place by "put back").  "anywhere": every free cell an object may lie on -- all but
+        the objects' places and the candidate destinations (24 of 32), so that a robot can
+        carry its partner's object part of the way, or dump it out of reach.  "few": four
+        chosen cells -- the gate (drop-and-go help and exchange), a far cell in each room (a
+        place to dump it) and the middle of the long way round.  "gate": the gate alone, as
+        in the exchange scene.  "none": no hand-off cell.
+    decoy : a spare object in the long way round (a third candidate for the partner's
+        object; with "anywhere" the model then grows past what the dynamics tables hold).
+
+    The engine's collision rule breaks a tie at the gate for robot 0 (both stepping into it:
+    robot 0 moves, robot 1 stays): read it off the mirrored pairings."""
+    rows = GATE_MAP
+    Y, X = len(rows), len(rows[0])
+    at = {}                                   # symbol -> cells, in (ix, iy) with iy up
+    grid = np.full((X, Y), np.inf)
+    for r, line in enumerate(rows):
+        for c, ch in enumerate(line):
+            if ch != "#":
+                cell = (c, Y - 1 - r)
+                grid[cell] = 1.0
+                at.setdefault(ch, []).append(cell)
+    one = {ch: cells[0] for ch, cells in at.items() if len(cells) == 1}
+    stars = sorted(at["*"], key=lambda c: (-c[1], c[0]))
+    candidates = (one["B"], one["A"], *stars)            # G0 = robot 1's goal, G1 = robot 0's
+    pickups = (one["a"], one["b"])
+    objects = (one["d"],) if decoy else "goal"
+    free = [(int(x), int(y)) for x, y in np.argwhere(np.isfinite(grid))]
+    taken = set(candidates) | set(pickups) | ({one["d"]} if decoy else set())
+    if handoff == "anywhere":
+        hand = tuple(c for c in free if c not in taken)
+    elif handoff == "few":
+        far = (2, 3), (8, 3)                             # a far cell in each room
+        hand = (one["G"], *far) + (() if decoy else (one["d"],))
+    elif handoff == "gate":
+        hand = (one["G"],)
+    elif handoff == "none":
+        hand = ()
+    else:
+        raise ValueError(f"handoff must be anywhere, few, gate or none, got {handoff!r}")
+    name = "gate" + {"anywhere": "", "few": "_few", "gate": "_gateonly", "none": "_nohandoff"}[
+        handoff] + ("_decoy" if decoy else "")
+    return Scene(grid=grid, starts=(one["1"], one["2"]), pickups=pickups,
+                 destinations=(one["A"], one["B"]), candidate_cells=candidates,
+                 objects=objects, name=name, handoff_cells=hand)
