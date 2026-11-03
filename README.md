@@ -25,7 +25,11 @@ TAU="0.2 0.5" sh run_all_49_parallel.sh                      # ... agent_1 at ta
 sh run_tau_grid.sh                                           # ... at every pair of taus 0.1-0.5
 CONFLICT=task sh run_all_49_parallel.sh                      # ... with the task conflict, -w r(g_j)
 SAME=1 TAUS="0.1 0.3 0.5" HAZARD=0.02 sh run_tau_grid.sh     # ... the partner's goal may change
+sh run_testbed.sh                                            # hinder vs the seven goals on seven scenes
 ```
+
+The testbed (2026-11-03): the gate scene and the six meeting tier scenes on the house map,
+hinder against each social goal (`RUN_ALL_49.md`, "The testbed").
 
 Since 2026-11-02 the partner's goal may change, as an option (off by default): `HAZARD=h`
 mixes the belief about it with the uniform after every update, so that a crushed hypothesis

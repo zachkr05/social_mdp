@@ -156,6 +156,31 @@ The package is self-contained. It shares no code with `social_mdp/` in the same 
 experiment engine behind `run_experiment`, the ablation arms and the congruence scores): it does
 one thing, roll out a pairing of social goals and say what happened.
 
+## The gate scene and the testbed (since 2026-11-03)
+
+`scenes.gate_scene(handoff="anywhere", decoy=False)` (`GATE_MAP`, drawn 2026-11-02): two 3 x 4
+rooms joined by a one-cell gate and a long way round (2 moves between the gate's neighbours
+through it, 12 round), mirror-symmetric. Each robot starts next to its partner's object; its
+own object lies in the other room and its destination at home, among two more candidates
+(six in all). Alone a task takes 19 transitions; whoever stands in or next to the gate blocks
+the short way. `handoff`: where an object may be put down -- "anywhere" (the 24 free cells
+that are no object's place and no candidate; the user: "Lets enable this scene with being able
+to drop off anywhere"), "few" (the gate, a far cell in each room, the middle of the way round),
+"gate" or "none"; `decoy` adds a spare object on the way round. Sizes at the 49's settings
+(swaps on): "gate" 32 cells, its dynamics tables alone 20 GiB (1,068 object configurations
+without swaps, 139,392 events), some 60-70 GiB a rollout -- an estimate, too big to build on a
+small machine; "few" 177,152 joint states, 6.2 GiB; "gate" alone 100,352, 3.4 GiB.
+
+`examples/run_object_inference.py --scene` takes `gate`, `gate_few`, `gate_gateonly` and the
+twelve fair tier scenes of `examples/tier_scenes.py` by name (the house at 0.5 m, 79 free cells,
+no hand-off cells: 480,557 joint states, 15.6 GiB at the 49's settings). `TESTBED` names the
+seven of the testbed -- the gate scene and the meeting suite's six -- and `run_testbed.sh` runs
+hinder against each of the seven social goals on them (`RUN_ALL_49.md`, "The testbed").
+`run_tau_grid.sh` takes several scenes (`SCENES`) and a goal list per robot (`GOALS1`,
+`GOALS2`), a job per rollout. Checked: `tests/test_testbed.py` (the registry, the tier scenes
+against `tier_scenes.SCENES`, the gate scene as drawn, its symmetry, the two ways between the
+rooms, the hand-off variants, a world built for the gate-only variant).
+
 ## The partner's goal may change: a hazard (options, since 2026-11-02)
 
 The user: "Ok lets go ahead an implement this: A better cure for locked-in beliefs is a hazard

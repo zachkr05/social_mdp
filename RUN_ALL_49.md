@@ -1,5 +1,35 @@
 # All 49 pairings: the belief update of Eqs. 5-6 as the authors' solver keeps them (2026-10-30), nothing automatic, a pick-up of three transitions, two posteriors by the hands, five hand actions, the hinderer without a goal of its own, inertia
 
+## The testbed: hinder against every goal on seven scenes (2026-11-03)
+
+`run_testbed.sh`: agent_1 a hinderer, agent_2 each of the seven social goals, both at level 2
+and at the same tau (each of `TAUS`, default 0.1, 0.15, 0.2), at the 49's settings, on
+
+| scene | what it is | joint states | memory a rollout |
+|---|---|---|---|
+| `gate` | two 3 x 4 rooms, a one-cell gate and a long way round; an object may be put down on any cell it may lie on | about 1.1-1.3 million | some 60-70 GiB (an estimate) |
+| `near_miss`, `same_room_later` | tier low: close, but no contact | 480,557 | 15.6 GiB |
+| `hall_crossing`, `doorway_passing` | tier medium: they meet, with room to pass | 480,557 | 15.6 GiB |
+| `head_on_blocked_goal`, `head_on_corridor` | tier high: someone must give way | 480,557 | 15.6 GiB |
+
+The six are the meeting suite of `examples/tier_scenes.py`, the fair placements on the 0.5 m
+house (79 free cells, six candidate destinations, no hand-off cells). 7 x 7 x 3 = 147 rollouts.
+The script runs two pools at once: the gate scene's (`GATE_WORKERS`, default a third of 90 % of
+the memory in rollouts of `MEM_GATE` = 72 GiB, `GATE_THREADS` = 4) and the house's (the rest of
+the memory in rollouts of `MEM_HOUSE` = 18 GiB, the rest of the CPUs); on 755 GiB and 64 CPUs
+that is 3 x 4 and 25 x 2. Every rollout is its own job, so every scene and every tau start at
+once. Times are estimates, scaled from the two-room scene's 10-40 minutes on 2 threads: a tier
+scene some 1.5-5 h on 2 threads, the gate some 2-8 h on 4. Time one of each first:
+
+    TAUS="0.1" GOALS2="cooperation" HOUSE="" sh run_testbed.sh                  # one gate rollout
+    TAUS="0.1" GOALS2="cooperation" GATE="" HOUSE="near_miss" sh run_testbed.sh  # one tier one
+    nohup sh run_testbed.sh > logs/testbed.out 2>&1 &                            # all 147
+
+`GATE="gate_few"` is the gate with four hand-off cells (6.2 GiB); `HAZARD=0.02` and the rest of
+`run_tau_grid.sh`'s options carry through. Figures per scene in `output/testbed/<scene>/`. The
+tier scenes are asymmetric, so hinder as agent_2 is another run: `GOALS1="cooperation conflict
+competition coercion exchange none hinder" GOALS2="hinder"`.
+
 ## The partner's goal may change: a hazard (options, 2026-11-02)
 
 Off by default. `HAZARD=h` mixes each robot's belief about its partner's object or

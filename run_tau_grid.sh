@@ -14,6 +14,8 @@
 #     GOALS="competition coercion" sh run_tau_grid.sh      # only the pairings of these goals
 #     SAME=1 TAUS="0.1 0.15 0.2" sh run_tau_grid.sh         # one tau for both robots: 3 x 49
 #     SAME=1 TAUS="0.1 0.3 0.5" HAZARD=0.02 sh run_tau_grid.sh   # the partner's goal may change
+#     SAME=1 TAUS="0.1" SCENES="near_miss head_on_corridor" GOALS1=hinder MEM=18 sh run_tau_grid.sh
+#                                      # hinder vs every goal on two tier scenes
 #
 # One folder per pair of taus, under output/ (..._tau<t1>_<t2>_..., or ..._tau<t>_... where the
 # two are equal: the folder of `--temperature <t>`).  Interrupted? Run the same line again:
@@ -42,7 +44,9 @@
 # SWAP=0 changes the dynamics too, so the grid to compare it with is SCENE=two SWAP=0 (folders
 # without _swap), not the 49's.
 # Environment: TAUS1, TAUS2 (default TAUS, default "0.1 0.2 0.3 0.4 0.5"), SAME, GOALS (default
-# all seven), THREADS per worker (default 2), WORKERS (default: the CPUs / THREADS), SWAP
+# all seven), GOALS1 and GOALS2 (agent_1's goals and agent_2's, default GOALS; since 2026-11-03),
+# SCENES (one or more scenes, default SCENE; since 2026-11-03: a job per rollout, every scene
+# and tau at once), THREADS per worker (default 2), WORKERS (default: the CPUs / THREADS), SWAP
 # (default 1; 0: no swaps on a place, the folders then lack _swap), MEM (whole GiB a rollout may use;
 # sets the default WORKERS and THREADS by the machine's memory), PHYS
 # (Config.physical_likelihood), CONFLICT (Config.conflict: table, the default, Table I's
@@ -55,13 +59,18 @@
 # ..._socialhazard<H>, ..._handhazard<H>),
 # SCENE (default two), STEPS (default 60), NOVIDEO (default 1:
 # records only -- 1225 x 3 videos is a lot; NOVIDEO=0 draws them), LOGS (default
-# logs/tau_grid), OUT (default output/tau_grid), PYTHON (default python3).
+# logs/tau_grid), OUT (default output/tau_grid; with more than one scene, OUT/<scene> for each),
+# PYTHON (default python3).  The testbed of 2026-11-03 -- hinder against the seven goals on
+# seven scenes, in two pools by memory -- is run_testbed.sh.
 set -e
 PY=${PYTHON:-python3}
 TAUS=${TAUS:-0.1 0.2 0.3 0.4 0.5}
 TAUS1=${TAUS1:-$TAUS}
 TAUS2=${TAUS2:-$TAUS}
 GOALS=${GOALS:-cooperation conflict competition coercion exchange none hinder}
+GOALS1=${GOALS1:-$GOALS}          # agent_1's goals (2026-11-03; GOALS1="hinder": hinder vs every goal)
+GOALS2=${GOALS2:-$GOALS}          # agent_2's
+SCENES=${SCENES:-${SCENE:-two}}   # one or more scenes (2026-11-03)
 FLAGS="--levels 2 2 --objects inferred --steal --foreign-carry-cost 1 --inertia 1 --pick-cost 2"
 [ "${SWAP:-1}" = 1 ] && FLAGS="$FLAGS --swap"      # SWAP=0: no swaps on a place (folders without _swap)
 [ -n "$PHYS" ] && FLAGS="$FLAGS --physical-likelihood $PHYS"
@@ -70,7 +79,7 @@ FLAGS="--levels 2 2 --objects inferred --steal --foreign-carry-cost 1 --inertia 
 [ -n "$SOCIAL_HAZARD" ] && FLAGS="$FLAGS --social-hazard $SOCIAL_HAZARD"
 [ -n "$HAND_HAZARD" ] && FLAGS="$FLAGS --hand-hazard $HAND_HAZARD"
 [ -n "$MEM" ] && FLAGS="$FLAGS --max-memory-gib $MEM"   # (not in the folder name: same model)
-EXTRA="--scene ${SCENE:-two} --steps ${STEPS:-60}"
+EXTRA="--steps ${STEPS:-60}"
 [ "${NOVIDEO:-1}" = 1 ] && EXTRA="$EXTRA --no-video"
 N=$($PY -c "import os; print(os.cpu_count() or 2)")
 if [ -n "$MEM" ]; then
@@ -100,47 +109,53 @@ pairs() {
     for t1 in $TAUS1; do for t2 in $TAUS2; do echo "$t1 $t2"; done; done
   fi
 }
-np=$(pairs | wc -l); ng=$(echo $GOALS | wc -w)
+np=$(pairs | wc -l); n1=$(echo $GOALS1 | wc -w); n2=$(echo $GOALS2 | wc -w); ns=$(echo $SCENES | wc -w)
 if [ "${SAME:-0}" = 1 ]; then what="both robots at each tau of $TAUS1"
 else what="agent_1 at $TAUS1, agent_2 at $TAUS2"; fi
-echo "tau grid: $what; $np pairs of taus x $(( ng * ng )) pairings = $(( np * ng * ng )) rollouts; $WORKERS workers x $THREADS threads; logs in $LOGS"
+echo "tau grid: $SCENES; $what; $ns scene(s) x $np pairs of taus x $(( n1 * n2 )) pairings = $(( ns * np * n1 * n2 )) rollouts; $WORKERS workers x $THREADS threads; logs in $LOGS"
 
 # compile the kernels once (numba caches them) before the workers start together
 $PY examples/run_object_inference.py $FLAGS --temperature 0.2 0.3 --scene tiny --steps 2 \
   --no-video --output "$LOGS/warmup" --threads "$THREADS" --pairing none none > "$LOGS/warmup.log" 2>&1
 
-# one job per (agent_1's tau, agent_2's tau, agent_1's goal): its pairings with every goal of
-# agent_2, one after the other; WORKERS jobs at a time, a new one as soon as one ends
+# one job per rollout (2026-11-03): (scene, agent_1's tau, agent_2's tau, agent_1's goal,
+# agent_2's goal), the pairings outermost so that every scene and every tau start at once;
+# WORKERS jobs at a time, a new one as soon as one ends
 JOBS="$LOGS/jobs.txt"
-pairs | while read -r t1 t2; do
-  for a in $GOALS; do echo "$t1 $t2 $a"; done
-done > "$JOBS"
-export PY FLAGS EXTRA THREADS LOGS GOALS
+pairs > "$LOGS/pairs.txt"
+for a in $GOALS1; do for b in $GOALS2; do for sc in $SCENES; do
+  while read -r t1 t2; do echo "$sc $t1 $t2 $a $b"; done < "$LOGS/pairs.txt"
+done; done; done > "$JOBS"
+export PY FLAGS EXTRA THREADS LOGS
 xargs -P "$WORKERS" -L 1 sh -c '
-  t1=$0; t2=$1; a=$2; ARGS=""
-  for b in $GOALS; do ARGS="$ARGS --pairing $a $b"; done
-  log="$LOGS/run_${t1}_${t2}_$a.log"
-  if $PY examples/run_object_inference.py $FLAGS $EXTRA --temperature $t1 $t2 \
-       --threads "$THREADS" --resume $ARGS > "$log" 2>&1; then
-    echo "done: agent_1 at tau $t1, agent_2 at $t2, agent_1 $a"
+  sc=$0; t1=$1; t2=$2; a=$3; b=$4
+  log="$LOGS/run_${sc}_${t1}_${t2}_${a}_$b.log"
+  if $PY examples/run_object_inference.py $FLAGS $EXTRA --scene $sc --temperature $t1 $t2 \
+       --threads "$THREADS" --resume --pairing $a $b > "$log" 2>&1 < /dev/null; then
+    echo "done: $sc, agent_1 at tau $t1, agent_2 at $t2, $a / $b"
   else
-    echo "FAILED: agent_1 at tau $t1, agent_2 at $t2, agent_1 $a (see $log)"
+    echo "FAILED: $sc, agent_1 at tau $t1, agent_2 at $t2, $a / $b (see $log)"
   fi
 ' < "$JOBS"
 
-# per pair of taus, one pass over its saved rollouts (nothing is rolled out again): the
-# folder's results.md, results.png and summary.json
-: > "$LOGS/folders.txt"
-pairs > "$LOGS/pairs.txt"
-while read -r t1 t2; do
-  ARGS=""
-  for a in $GOALS; do for b in $GOALS; do ARGS="$ARGS --pairing $a $b"; done; done
-  log="$LOGS/table_${t1}_${t2}.log"
-  if $PY examples/run_object_inference.py $FLAGS $EXTRA --temperature $t1 $t2 \
-       --threads "$THREADS" --resume $ARGS > "$log" 2>&1 < /dev/null; then
-    tail -n 1 "$log" >> "$LOGS/folders.txt"
-  else
-    echo "FAILED: the table of agent_1 at tau $t1, agent_2 at $t2 (see $log)"
+# per scene and pair of taus, one pass over its saved rollouts (nothing is rolled out again
+# where every one was saved): the folder's results.md, results.png and summary.json; then
+# tools/tau_grid.py per scene, in OUT (OUT/<scene> with more than one scene)
+for sc in $SCENES; do
+  : > "$LOGS/folders_$sc.txt"
+  while read -r t1 t2; do
+    ARGS=""
+    for a in $GOALS1; do for b in $GOALS2; do ARGS="$ARGS --pairing $a $b"; done; done
+    log="$LOGS/table_${sc}_${t1}_${t2}.log"
+    if $PY examples/run_object_inference.py $FLAGS $EXTRA --scene $sc --temperature $t1 $t2 \
+         --threads "$THREADS" --resume $ARGS > "$log" 2>&1 < /dev/null; then
+      tail -n 1 "$log" >> "$LOGS/folders_$sc.txt"
+    else
+      echo "FAILED: the table of $sc, agent_1 at tau $t1, agent_2 at $t2 (see $log)"
+    fi
+  done < "$LOGS/pairs.txt"
+  if [ "$ns" = 1 ]; then out=${OUT:-output/tau_grid}; else out=${OUT:-output/tau_grid}/$sc; fi
+  if [ -s "$LOGS/folders_$sc.txt" ]; then
+    $PY tools/tau_grid.py --out "$out" $(cat "$LOGS/folders_$sc.txt")
   fi
-done < "$LOGS/pairs.txt"
-$PY tools/tau_grid.py --out "${OUT:-output/tau_grid}" $(cat "$LOGS/folders.txt")
+done

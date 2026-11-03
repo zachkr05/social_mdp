@@ -87,10 +87,12 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from run_tier_scenes import believed  # noqa: E402
+from tier_scenes import SCENES as TIER_PLACEMENTS, tier_scene  # noqa: E402
 
 from social_pairings import (AUTOMATIC_HANDS, Config, Scene, run_pairing,  # noqa: E402
                              six_object_scene, two_room_scene)
 from social_pairings import goals as G  # noqa: E402
+from social_pairings.scenes import gate_scene  # noqa: E402
 from social_pairings.config import written_with  # noqa: E402
 from social_pairings.render import (ROBOT_COLOURS, goal_label, render_videos,  # noqa: E402
                                     video_paths)
@@ -145,7 +147,19 @@ def two_spares_scene() -> Scene:
 SCENES = {"two": (two_room_scene, {}), "spare": (spare_scene, {}),
           "spare2": (two_spares_scene, {}),
           "center": (center_scene, {}), "tiny": (tiny_scene, dict(resolution=1.0)),
-          "six": (six_object_scene, {})}
+          "six": (six_object_scene, {}),
+          # the gate scene (2026-11-02; social_pairings.scenes.gate_scene): an object may be
+          # put down anywhere it may lie ("gate"), on four chosen cells, or in the gate alone
+          "gate": (lambda: gate_scene("anywhere"), {}),
+          "gate_few": (lambda: gate_scene("few"), {}),
+          "gate_gateonly": (lambda: gate_scene("gate"), {}),
+          # the twelve fair congruence tier scenes on the 0.5 m house (examples/tier_scenes.py),
+          # by name: the meeting suite's six and the exchange suite's six
+          **{name: (lambda name=name: tier_scene(name), {}) for name in TIER_PLACEMENTS}}
+# the testbed of 2026-11-03 (the user: "So we will run the tesbed on 7 scenes"): the gate
+# scene and the meeting suite's six tier scenes, low to high
+TESTBED = ("gate", "near_miss", "same_room_later", "hall_crossing", "doorway_passing",
+           "head_on_blocked_goal", "head_on_corridor")
 
 
 def stem(pair) -> str:
