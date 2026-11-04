@@ -60,7 +60,9 @@
 # SCENE (default two), STEPS (default 60), NOVIDEO (default 1:
 # records only -- 1225 x 3 videos is a lot; NOVIDEO=0 draws them), LOGS (default
 # logs/tau_grid), OUT (default output/tau_grid; with more than one scene, OUT/<scene> for each),
-# PYTHON (default python3).  The testbed of 2026-11-03 -- hinder against the seven goals on
+# VERBOSE (default 0; 1: a line per transition in each rollout's log), PYTHON (default python3).
+# Each process's thread pools are THREADS wide (NUMBA_NUM_THREADS, OMP_NUM_THREADS); a rollout
+# that fails is run once more after the others.  The testbed of 2026-11-03 -- hinder against the seven goals on
 # seven scenes, in two pools by memory -- is run_testbed.sh.
 set -e
 PY=${PYTHON:-python3}
@@ -81,6 +83,7 @@ FLAGS="--levels 2 2 --objects inferred --steal --foreign-carry-cost 1 --inertia 
 [ -n "$MEM" ] && FLAGS="$FLAGS --max-memory-gib $MEM"   # (not in the folder name: same model)
 EXTRA="--steps ${STEPS:-60}"
 [ "${NOVIDEO:-1}" = 1 ] && EXTRA="$EXTRA --no-video"
+[ "${VERBOSE:-0}" = 1 ] && EXTRA="$EXTRA --verbose"   # a line per transition in each rollout's log
 N=$($PY -c "import os; print(os.cpu_count() or 2)")
 if [ -n "$MEM" ]; then
   # a rollout may use MEM GiB: as many workers as 90 % of the memory holds, the CPUs shared
@@ -99,6 +102,11 @@ else
   WORKERS=${WORKERS:-$(( N / THREADS ))}
 fi
 [ "$WORKERS" -lt 1 ] && WORKERS=1
+# each process's thread pools at its share of the CPUs (2026-11-03): numba's OpenMP pool is
+# made with NUMBA_NUM_THREADS threads -- by default one per CPU, whatever set_num_threads
+# asks -- and 28 processes of 64 threads ran into the per-user limit ("libgomp: Thread
+# creation failed: Resource temporarily unavailable")
+export NUMBA_NUM_THREADS=$THREADS OMP_NUM_THREADS=$THREADS OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 LOGS=${LOGS:-logs/tau_grid}
 mkdir -p "$LOGS"
 # the pairs of taus, one "t1 t2" per line
@@ -127,16 +135,30 @@ for a in $GOALS1; do for b in $GOALS2; do for sc in $SCENES; do
   while read -r t1 t2; do echo "$sc $t1 $t2 $a $b"; done < "$LOGS/pairs.txt"
 done; done; done > "$JOBS"
 export PY FLAGS EXTRA THREADS LOGS
-xargs -P "$WORKERS" -L 1 sh -c '
-  sc=$0; t1=$1; t2=$2; a=$3; b=$4
-  log="$LOGS/run_${sc}_${t1}_${t2}_${a}_$b.log"
-  if $PY examples/run_object_inference.py $FLAGS $EXTRA --scene $sc --temperature $t1 $t2 \
-       --threads "$THREADS" --resume --pairing $a $b > "$log" 2>&1 < /dev/null; then
-    echo "done: $sc, agent_1 at tau $t1, agent_2 at $t2, $a / $b"
-  else
-    echo "FAILED: $sc, agent_1 at tau $t1, agent_2 at $t2, $a / $b (see $log)"
-  fi
-' < "$JOBS"
+run_jobs() {      # the rollouts of the jobs file $1, WORKERS at a time; the failed ones to failed.txt
+  xargs -P "$WORKERS" -L 1 sh -c '
+    sc=$0; t1=$1; t2=$2; a=$3; b=$4
+    log="$LOGS/run_${sc}_${t1}_${t2}_${a}_$b.log"
+    if $PY examples/run_object_inference.py $FLAGS $EXTRA --scene $sc --temperature $t1 $t2 \
+         --threads "$THREADS" --resume --pairing $a $b > "$log" 2>&1 < /dev/null; then
+      echo "done: $sc, agent_1 at tau $t1, agent_2 at $t2, $a / $b"
+    else
+      echo "FAILED: $sc, agent_1 at tau $t1, agent_2 at $t2, $a / $b (see $log)"
+      echo "$sc $t1 $t2 $a $b" >> "$LOGS/failed.txt"
+    fi
+  ' < "$1"
+}
+: > "$LOGS/failed.txt"
+run_jobs "$JOBS"
+# once more, in parallel, the rollouts that failed (a squeeze of threads or memory as many
+# start at once); what fails again is left to the table pass below, which rolls out what is
+# missing one at a time
+if [ -s "$LOGS/failed.txt" ]; then
+  mv "$LOGS/failed.txt" "$LOGS/retry.txt"
+  : > "$LOGS/failed.txt"
+  echo "retrying $(wc -l < "$LOGS/retry.txt") failed rollout(s)"
+  run_jobs "$LOGS/retry.txt"
+fi
 
 # per scene and pair of taus, one pass over its saved rollouts (nothing is rolled out again
 # where every one was saved): the folder's results.md, results.png and summary.json; then

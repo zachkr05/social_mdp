@@ -41,14 +41,16 @@
 # Environment: TAUS (default "0.1 0.15 0.2"), GOALS1 (default hinder), GOALS2 (default all
 # seven), GATE (default gate; "" for none), HOUSE (default the six tier scenes; "" for none),
 # MEM_GATE (default 72), MEM_HOUSE (default 18), GATE_WORKERS, GATE_THREADS (default 4),
-# HOUSE_WORKERS, HOUSE_THREADS, and everything run_tau_grid.sh takes (SWAP, STEPS, NOVIDEO,
-# HAZARD, ...), PYTHON (default python3).
+# HOUSE_WORKERS, HOUSE_THREADS, VERBOSE (default 1: each rollout's log has a line per
+# transition with its time -- tail -1 logs/testbed_house/run_<...>.log), and everything
+# run_tau_grid.sh takes (SWAP, STEPS, NOVIDEO, HAZARD, ...), PYTHON (default python3).
 set -e
 PY=${PYTHON:-python3}
 export SAME=1
 export TAUS=${TAUS:-0.1 0.15 0.2}
 export GOALS1=${GOALS1:-hinder}
 export GOALS2=${GOALS2:-cooperation conflict competition coercion exchange none hinder}
+export VERBOSE=${VERBOSE:-1}      # a line per transition in each rollout's log: how far it is
 GATE=${GATE-gate}
 HOUSE=${HOUSE-near_miss same_room_later hall_crossing doorway_passing head_on_blocked_goal head_on_corridor}
 MEM_GATE=${MEM_GATE:-72}
