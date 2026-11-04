@@ -38,6 +38,7 @@
 #     HAZARD=0.02 sh run_testbed.sh                              # the partner's goal may change
 #     INFTAU=0.5 HAZARD=0.02 sh run_testbed.sh                   # ... and a softer likelihood
 #     LAPSE=0.05 HAZARD=0.02 sh run_testbed.sh                   # ... or a lapse in it
+#     LPOW=0.25 HAZARD=0.02 sh run_testbed.sh                    # ... or a tempered update
 #     LAZY=0.02 sh run_testbed.sh                                # lazy hypotheses (folders _lazy0.02)
 #
 # Interrupted? Run the same line again: --resume keeps every rollout already saved.  Folders:
@@ -51,7 +52,7 @@
 # threads at least), HOUSE_THREADS (default 2), MAX_THREADS (default 8: a rollout's threads at
 # most, when CPUs are free), NUMA (1: bind each rollout to a NUMA node, needs numactl), VERBOSE
 # (default 1), and everything run_tau_grid.sh takes (SWAP, STEPS, NOVIDEO, HAZARD, INFTAU, LAPSE,
-# LAZY, ...),
+# LPOW, LAZY, ...),
 # PYTHON (default python3).
 set -e
 export SAME=1

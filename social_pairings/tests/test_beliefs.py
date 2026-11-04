@@ -48,7 +48,7 @@ def product(po, pd, obj, dst):
 
 
 def reference_update(prior_phys, prior_social, idle, lik0, lik1, l_idle, keep, empty, obj,
-                     hazard, stages=True, factored=False, dst=None):
+                     hazard, stages=True, factored=False, dst=None, alpha=1.0):
     """The update of one transition on probabilities (not logs), from the equations.
 
     prior_phys (PG,), prior_social (nT,) or None, idle: the beliefs as they were.
@@ -59,8 +59,11 @@ def reference_update(prior_phys, prior_social, idle, lik0, lik1, l_idle, keep, e
     factored (``Config.belief_factored``): the two posteriors apart -- the one that learns
     in this stage (the object's with empty hands, the destination's holding; both without
     the stages) is the marginal of prior x likelihood x transition term, the other the
-    marginal of prior x transition term, and the belief their product.  -> (phys, social,
-    idle)."""
+    marginal of prior x transition term, and the belief their product.  alpha
+    (``Config.likelihood_power``): every likelihood taken to that power before it multiplies
+    -- the learning factor's (its marginal over the prior's other factor) under the two
+    posteriors apart, each hypothesis's under the joint one, the social goals'; not the idle
+    mode's.  -> (phys, social, idle)."""
     prior_phys = np.asarray(prior_phys, dtype=float)
     lik0 = np.asarray(lik0, dtype=float)
     L = lik0.copy()
@@ -73,12 +76,20 @@ def reference_update(prior_phys, prior_social, idle, lik0, lik1, l_idle, keep, e
     mix = (1.0 - idle) * L + idle * l_idle
     post = prior_phys * mix * keep
     explained = post.sum() > 0.0
+    if explained and not factored and alpha != 1.0:
+        post = prior_phys * mix ** alpha * keep
     if not explained:
         post = prior_phys * keep
     if post.sum() > 0.0 and factored:
         obj, dst = np.asarray(obj), np.asarray(dst)
         po_l, pd_l = marginals(post, obj, dst)
         po_h, pd_h = marginals(prior_phys * keep, obj, dst)
+        if alpha != 1.0:                 # the factor's likelihood, po_l / po_h, ^ alpha
+            with np.errstate(divide="ignore", invalid="ignore"):
+                po_l = np.where(po_l > 0.0, po_h * (po_l / np.where(po_h > 0, po_h, 1)) ** alpha,
+                                0.0)
+                pd_l = np.where(pd_l > 0.0, pd_h * (pd_l / np.where(pd_h > 0, pd_h, 1)) ** alpha,
+                                0.0)
         po = po_l if (empty or not stages) else po_h
         pd = pd_l if (not empty or not stages) else pd_h
         phys = product(po / po.sum(), pd / pd.sum(), obj, dst)
@@ -108,7 +119,7 @@ def reference_update(prior_phys, prior_social, idle, lik0, lik1, l_idle, keep, e
     if prior_social is not None:
         Lt = np.asarray([(kept * np.asarray(lik1)[:, t]).sum()
                          for t in range(len(prior_social))])
-        post_t = np.asarray(prior_social) * ((1.0 - idle) * Lt + idle * l_idle)
+        post_t = np.asarray(prior_social) * ((1.0 - idle) * Lt + idle * l_idle) ** alpha
         social = post_t / post_t.sum() if post_t.sum() > 0.0 else np.asarray(prior_social)
     return phys, social, new_idle
 
@@ -780,6 +791,123 @@ class InferenceTemperature(unittest.TestCase):
         self.assertGreater(worst[0], worst[1])
 
 
+def against_the_reference(tc: unittest.TestCase, w, mdp, state, actions) -> int:
+    """The engine's update of both robots after ``actions`` at ``state`` against the
+    reference, under the engine's own options (its likelihood's tau, lapse and power) ->
+    how many updates were compared."""
+    s = w.sid(state)
+    nxt = w.unsid(w.step(s, actions))
+    event = event_at(w, state)
+    checked = 0
+    for j in (0, 1):
+        if w.busy[state[2], j]:
+            continue
+        a = int(actions[j])
+        if not np.isfinite(mdp.q_values(mdp.root[j], s, j)[a]):
+            continue
+        old = mdp.about[j]
+        lik0, lik1, l_idle = engine_likelihoods(mdp, j, s, a)
+        keep = mdp.transition_term(j, s, actions, nxt, event)
+        want = reference_update(old.phys(), old.social(), old.idle, lik0, lik1, l_idle, keep,
+                                int(w.hold[state[2], j]) < 0, mdp.pg_obj[j],
+                                mdp.cfg.idle_hazard, mdp.cfg.belief_stages,
+                                mdp.cfg.belief_factored, mdp.pg_dst[j],
+                                alpha=mdp.cfg.likelihood_power)
+        got = mdp.updated_belief(j, s, actions, nxt, event)
+        np.testing.assert_allclose(got.phys(), want[0], atol=1e-12)
+        np.testing.assert_allclose(got.social(), want[1], atol=1e-12)
+        tc.assertAlmostEqual(got.idle, want[2], places=12)
+        checked += 1
+    return checked
+
+
+class LikelihoodPower(unittest.TestCase):
+    """A tempered update (``Config.likelihood_power``, 2026-11-04; the user: "Could we try
+    implementing something like this?", b_t(g) proportional to b^_t(g) l_t(g)^alpha): the
+    option, the update against the reference (the learning factor's likelihood ^ alpha under
+    the two posteriors apart, each hypothesis's under the joint one), and every likelihood
+    ratio taken to the power alpha exactly."""
+
+    A = 0.25
+
+    @classmethod
+    def setUpClass(cls):
+        cls.cfg = tight_explicit(likelihood_power=cls.A)
+        cls.w, _, cls.mdp, cls.start, _ = solved(TINY, cls.cfg, (2, 2),
+                                                 ("cooperation", "competition"), (1.0, 1.0),
+                                                 seed=21)
+        cls.mdp1 = solved(TINY, tight_explicit(), (2, 2), ("cooperation", "competition"),
+                          (1.0, 1.0), seed=21)[2]
+
+    def holding(self):
+        w = self.w
+        return (int(w.cell_id[(1, 1)]), int(w.cell_id[(2, 1)]), w.block_of([HOME, HELD0], [0, 0]))
+
+    def test_the_option(self):
+        self.assertEqual(Config().likelihood_power, 1.0)        # Bayes' rule by default
+        Config(likelihood_power=0.5)
+        Config(likelihood_power=1)
+        for bad in (0.0, -0.5, 1.5, True, float("nan"), "0.5"):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                Config(likelihood_power=bad)
+
+    def test_against_the_reference(self):
+        w, mdp = self.w, self.mdp
+        n = sum(against_the_reference(self, w, mdp, self.start, (a0, a1))
+                for a0 in range(5) for a1 in range(5))
+        n += sum(against_the_reference(self, w, mdp, self.holding(), (a0, a1))
+                 for a0 in (0, 1, 2, 3, WAIT, PLACE, GIVE) for a1 in (0, WAIT, PICK))
+        self.assertGreater(n, 40)
+
+    def test_the_joint_posterior(self):
+        cfg = tight_explicit(likelihood_power=0.5, belief_factored=False)
+        mdp = solved(TINY, cfg, (2, 2), ("cooperation", "competition"), (1.0, 1.0), seed=21)[2]
+        n = sum(against_the_reference(self, self.w, mdp, self.start, (a0, a1))
+                for a0 in range(5) for a1 in range(5))
+        n += sum(against_the_reference(self, self.w, mdp, self.holding(), (a0, a1))
+                 for a0 in (0, 1, 2, 3, WAIT) for a1 in (0, WAIT))
+        self.assertGreater(n, 30)
+
+    def test_with_the_other_options(self):
+        cfg = tight_explicit(likelihood_power=0.5, inference_temperature=0.5, belief_lapse=0.05)
+        mdp = solved(TINY, cfg, (2, 2), ("cooperation", "competition"), (1.0, 1.0), seed=21)[2]
+        n = sum(against_the_reference(self, self.w, mdp, self.start, (a0, a1))
+                for a0 in range(5) for a1 in range(5))
+        self.assertGreater(n, 20)
+
+    def test_every_ratio_to_the_power(self):
+        """From the same beliefs, after the same moves: the learning factor's posterior over
+        prior, one hypothesis against another, is Bayes' rule's ratio ^ alpha; so is the
+        social posterior's."""
+        w, mdp, mdp1, a_ = self.w, self.mdp, self.mdp1, self.A
+        n = 0
+        for state, stage in ((self.start, "object"), (self.holding(), "destination")):
+            s = w.sid(state)
+            for a0 in range(5):
+                actions = (a0, WAIT)
+                nxt = w.unsid(w.step(s, actions))
+                event = event_at(w, state)
+                if not np.isfinite(mdp.q_values(mdp.root[0], s, 0)[a0]):
+                    continue
+                got = mdp.updated_belief(0, s, actions, nxt, event)
+                bayes = mdp1.updated_belief(0, s, actions, nxt, event)
+                old = mdp.about[0]
+                k = 0 if stage == "object" else 1
+                before = marginals(old.phys(), mdp.pg_obj[0], mdp.pg_dst[0])[k]
+                for b_new, b_bayes, b_old in (
+                        (marginals(got.phys(), mdp.pg_obj[0], mdp.pg_dst[0])[k],
+                         marginals(bayes.phys(), mdp.pg_obj[0], mdp.pg_dst[0])[k], before),
+                        (got.social(), bayes.social(), old.social())):
+                    held = (b_old > 1e-200) & (b_bayes > 1e-200)
+                    r_pow = np.log(b_new[held] / b_old[held])
+                    r_bayes = np.log(b_bayes[held] / b_old[held])
+                    # up to the normalisation: differences between hypotheses
+                    np.testing.assert_allclose(r_pow - r_pow[0], a_ * (r_bayes - r_bayes[0]),
+                                               atol=1e-8)
+                    n += 1
+        self.assertGreater(n, 6)
+
+
 class Rollout(unittest.TestCase):
     """A rollout of the tiny scene, every posterior of every transition against the
     reference, and the record's beliefs consistent with the engine's."""
@@ -797,10 +925,10 @@ class Rollout(unittest.TestCase):
 
     def test_rollout_against_the_reference_softened(self):
         """... and with the likelihood's own temperature (``Config.inference_temperature``,
-        2026-11-04) as well as the lapse."""
+        2026-11-04), the lapse and a tempered update (``Config.likelihood_power``)."""
         self.roll_against_the_reference(
             tight_now(value_tol=1e-5, value_maps=False, deadlock_window=6, livelock_window=0,
-                      belief_lapse=0.05, inference_temperature=0.5))
+                      belief_lapse=0.05, inference_temperature=0.5, likelihood_power=0.5))
 
     def roll_against_the_reference(self, cfg):
         w, gid, mdp, state, _ = solved(TINY, cfg, (2, 2), ("cooperation", "competition"),
@@ -838,7 +966,8 @@ class Rollout(unittest.TestCase):
                 want.append(reference_update(old.phys(), old.social(), old.idle, lik0, lik1,
                                              l_idle, keep, int(w.hold[state[2], j]) < 0,
                                              mdp.pg_obj[j], cfg.idle_hazard, True,
-                                             cfg.belief_factored, mdp.pg_dst[j]))
+                                             cfg.belief_factored, mdp.pg_dst[j],
+                                             alpha=cfg.likelihood_power))
             mdp.observe(actions, s, nxt, event)
             for j in (0, 1):
                 np.testing.assert_allclose(mdp.about[j].phys(), want[j][0], atol=1e-10)

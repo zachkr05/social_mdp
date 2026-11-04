@@ -2164,6 +2164,22 @@ Both were devices of the belief layer until 2026-10-30 (an inference temperature
 lapse of 0.05 by default there) and went with it; they are back as options. With both, the
 lapse acts on the policy at $\tau_{inf}$.
 
+- **`likelihood_power`** ($\alpha \in (0, 1]$; `--likelihood-power`, `LPOW=`; the user, of goal
+  switching kept and the likelihood softened, $b_t(g) \propto \hat b_t(g)\,\ell_t(g)^\alpha$:
+  "Could we try implementing something like this?"): a tempered update, generalized ("power")
+  Bayes -- each posterior multiplied by its likelihood to the power $\alpha$, the physical
+  one by the learning factor's, $\ell(d) = \sum_o b_t(o)\,P(a \mid o, d)$ holding an object
+  ($\ell(o)$ with empty hands; each $\ell(o, d)$ under the joint posterior), after the idle
+  mode's mix; the social one by Eq. 5's; the idle mode not. Every likelihood ratio between
+  two hypotheses is taken to the power $\alpha$ exactly (`test_beliefs.LikelihoodPower`),
+  where `inference_temperature` renormalises each model's softmax over the actions. The
+  hazard stays the prediction step, $\hat b_t = (1-h)\,b_{t-1} + h/K$ -- the same family as
+  a switch to one of the other $K - 1$ goals, $(1-h')\,b + h'(1 - b)/(K-1)$, with
+  $h = h'K/(K-1)$. Folders `..._lpow<ALPHA>`. Replayed on the recorded evidence of the
+  hall_crossing run (red's moves held fixed): at $\alpha = 0.25$ the frame after step 50
+  reads G5 0.63 / G1 0.12 (Bayes: 0.97 / 0.015) -- far less sure of the wrong goal, still
+  not on the right one before the move that tells them apart.
+
 ## The belief update's workings in the record (since 2026-11-04)
 
 The user: "just have it put all diagnostics into the json file. All information for belief
@@ -4089,6 +4105,7 @@ every mix of levels ("Results").
 | `condition_on_placement` | `True` | Eq. 5's transition term: what the hands reveal of the partner's goal -- its finishing, its own set-down that did nothing, the robot's set-down for it that counted or failed, a hand-over it took or not -- rules out the hypotheses that predicted otherwise ("The belief update of 2026-10-30"). `False`: the actions alone |
 | `inference_temperature` | `None` | the likelihood of Eqs. 5-6 at a tau of its own, $T \times c(\text{move})$: the hypothesis models' softmax at it, $\psi^\eta$ renormalised, $\eta = \tau/\tau_{inf}$; the robots still plan at Eq. 7's tau. `None`: Eq. 7's tau, Eqs. 5-6 as printed ("A softer likelihood"; an option since 2026-11-04; a device of before 2026-10-30, 0.5 there). Folders `..._inftau<T>` |
 | `belief_lapse` | `0` | a lapse in the likelihood: each model's policy read as $(1-\varepsilon)\psi + \varepsilon/|A|$, so that one step moves no hypothesis by more than about $|A|/\varepsilon$ ("A softer likelihood"; an option since 2026-11-04; a device of before 2026-10-30, 0.05 there). Folders `..._lapse<E>` |
+| `likelihood_power` | `1` | a tempered update: each posterior about the partner multiplied by its likelihood ^ $\alpha$ (the learning factor's, after the idle mode's mix; Eq. 5's), every observation counting $\alpha$ of itself ("A softer likelihood"; since 2026-11-04). 1: Bayes' rule. Folders `..._lpow<ALPHA>` |
 | `belief_detail` | `True` | every step's belief update in the record, trace `belief_update`: every hypothesis model's Q and what it made of the action, Eqs. 5-6's likelihoods per hypothesis, destination and object, the beliefs before and after ("The belief update's workings in the record"; since 2026-11-04; `tools/belief_step.py` prints a step). Not part of the model: `--resume` keeps a record made without it. `False` (`--no-belief-detail`, `NODETAIL=1`): the record of before |
 | `partner_delivers`, `partner_parks`, `partner_observed`, `social_belief`, `child_conditioning` | `False`, `False`, `"action"`, `"marginals"`, `False` | the devices of before 2026-10-30, gone: the carry and park tables, the "outcome" observation, the joint posterior, the conditioning of the partner's estimate on the robot's action inside $\tilde R_j$. Kept only so that the records of before can be read; `Config` raises on any other value (`BELIEF_DEVICES`). (The lapse and the belief temperature of then are options again: above) |
 | `exchange_share` | `0.25` | $n$ of the exchange row |

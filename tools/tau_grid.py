@@ -66,6 +66,7 @@ def read(folders) -> list:
         # before: neither)
         lapse = float((summary.get("options") or {}).get("belief_lapse", 0.0))
         inftau = (summary.get("options") or {}).get("inference_temperature")
+        lpow = float((summary.get("options") or {}).get("likelihood_power", 1.0))
         for r in summary["rows"]:
             if r.get("objects", "inferred") != "inferred":
                 continue
@@ -74,7 +75,7 @@ def read(folders) -> list:
                              tau_2=t2, done_1=r["done_at"][0], done_2=r["done_at"][1],
                              goal_1=bool(own[0]), goal_2=bool(own[1]), steps=r["steps"],
                              stopped_by=r["stopped_by"], scene=scene, conflict=reading,
-                             hazards=hazards, lapse=lapse, inftau=inftau,
+                             hazards=hazards, lapse=lapse, inftau=inftau, lpow=lpow,
                              folder=str(folder)))
     return rows
 
@@ -99,6 +100,11 @@ def scene_of(rows) -> str:
         name += ", lapses mixed"
     elif lapses != {0.0}:
         name += f", lapse {lapses.pop():g}"
+    powers = {float(r.get("lpow") or 1.0) for r in rows}
+    if len(powers) > 1:
+        name += ", likelihood powers mixed"
+    elif powers != {1.0}:
+        name += f", likelihood ^{powers.pop():g}"
     hazards = {tuple(r.get("hazards") or (0.0, 0.0, 0.0)) for r in rows}
     if len(hazards) > 1:
         name += ", hazards mixed"

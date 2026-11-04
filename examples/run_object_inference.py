@@ -69,7 +69,9 @@ partner's goal may change, Baker, Saxe & Tenenbaum 2009's model M2) to ``..._haz
 ``_taskconflict``; ``--inference-temperature T`` and ``--lapse E`` (options since
 2026-11-04, off by default: the likelihood of the belief update at a tau of its own, T x a
 move's cost, and a lapse in it, each hypothesis model's policy read as
-``(1 - E) psi + E / |A|``) to ``..._inftau<T>`` and ``..._lapse<E>``, before the hazards:
+``(1 - E) psi + E / |A|``) to ``..._inftau<T>`` and ``..._lapse<E>``, and
+``--likelihood-power ALPHA`` (a tempered update, each posterior times its likelihood ^ ALPHA)
+to ``..._lpow<ALPHA>``, before the hazards:
 per rollout ``<pairing>__<objects>.json`` and ``.mp4`` (an MP4 video); ``summary.json``;
 ``results.md``
 (the finishes; what each robot ended up believing of its partner's object, destination and
@@ -513,6 +515,13 @@ def main() -> None:
                              "move costs a hypothesis at most a factor of about |A| / E (100 at "
                              "E = 0.05 and five moves) instead of e^(-dQ / tau).  Default 0: "
                              "Eqs. 5-6 as printed (folders ..._lapse<E>)")
+    parser.add_argument("--likelihood-power", type=float, default=1.0, metavar="ALPHA",
+                        help="Config.likelihood_power (since 2026-11-04): a tempered update -- "
+                             "each posterior about the partner multiplied by its likelihood ^ "
+                             "ALPHA in (0, 1] (the learning factor's: l(d) = sum_o b(o) "
+                             "P(a | o, d) holding an object), every observation counting ALPHA "
+                             "of itself; the goal-switch hazard stays the prediction step.  "
+                             "Default 1: Bayes' rule (folders ..._lpow<ALPHA>)")
     parser.add_argument("--no-belief-detail", action="store_true",
                         help="Config.belief_detail=False: leave the belief update's workings out "
                              "of the record (by default every step's \"belief_update\" holds them "
@@ -590,6 +599,12 @@ def main() -> None:
         parser.error("--inference-temperature takes a number > 0")
     if inftau is not None:
         options = dict(options, inference_temperature=inftau)
+    # a tempered update (2026-11-04): 1 (Bayes' rule) is the default and the folders of before
+    lpow = float(args.likelihood_power)
+    if not 0.0 < lpow <= 1.0:
+        parser.error("--likelihood-power takes a number in (0, 1]")
+    if lpow != 1.0:
+        options = dict(options, likelihood_power=lpow)
     # lazy hypotheses (2026-11-04): an approximation of the solve, so it names its folder
     if args.lazy > 0.0:
         options = dict(options, lazy_mass=args.lazy, lazy_period=args.lazy_period)
@@ -632,6 +647,7 @@ def main() -> None:
            + ("_objgoal" if factored else "")     # the two posteriors apart (2026-11-04)
            + ("" if inftau is None else f"_inftau{inftau:g}")
            + ("" if args.lapse <= 0.0 else f"_lapse{args.lapse:g}")
+           + ("" if lpow == 1.0 else f"_lpow{lpow:g}")
            + "".join(f"_{flag}{value:g}" for _, flag, value in hazards)
            + ("" if args.lazy <= 0.0 else f"_lazy{args.lazy:g}"))
     #        (... with the physical posterior on the level-0 policies, the authors' code; the
@@ -702,6 +718,7 @@ def main() -> None:
                                        if factored else "     two posteriors")
                                     + ("" if inftau is None else f"     inference tau {inftau:g}")
                                     + ("" if args.lapse <= 0.0 else f"     lapse {args.lapse:g}")
+                                    + ("" if lpow == 1.0 else f"     likelihood ^{lpow:g}")
                                     + "".join(f"     {HAZARD_LABELS[key]} {value:g}"
                                               for key, _, value in hazards)
                                     + ("" if args.lazy <= 0.0 else f"     lazy {args.lazy:g}"))
@@ -734,6 +751,8 @@ def main() -> None:
              + ("" if inftau is None else
                 f", the likelihood at a tau of its own, {inftau:g} x a move's cost (the robots "
                 f"plan at Eq. 7's)")
+             + ("" if lpow == 1.0 else
+                f", a tempered update: each posterior multiplied by its likelihood ^ {lpow:g}")
              + ("" if args.lapse <= 0.0 else
                 f", a lapse in the likelihood: the partner read as acting at random with "
                 f"probability {args.lapse:g}, (1 - {args.lapse:g}) psi + {args.lapse:g} / |A|")

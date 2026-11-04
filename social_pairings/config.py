@@ -87,6 +87,7 @@ ADDED_FIELDS = dict(
     lazy_mass=0.0,                 # 2026-11-04 (every hypothesis model solved every transition)
     lazy_period=5,                 # 2026-11-04
     belief_detail=False,           # 2026-11-04 (no record of the belief update's workings)
+    likelihood_power=1.0,          # 2026-11-04 (Bayes' rule)
 )
 
 
@@ -512,6 +513,19 @@ class Config:
     # belief layer of then (0.05 by default there); back as an option, 0 by default (Eqs. 5-6
     # as printed).  Folders ..._lapse<e>.
     belief_lapse: float = 0.0
+    # A tempered update (2026-11-04; the user: "Could we try implementing something like
+    # this?", of goal switching kept and the likelihood softened, b_t(g) proportional to
+    # b^_t(g) l_t(g)^alpha): each posterior is updated with its likelihood raised to the power
+    # alpha in (0, 1] -- generalized ("power") Bayes, every observation counting alpha of
+    # itself.  The physical posterior: the likelihood of the factor that learns,
+    # l(d) = sum_o b_t(o) P(a | o, d) holding an object, l(o) = sum_d b_t(d) P(a | o, d) with
+    # empty hands (the joint posterior: l(o, d)), after the idle mode's mix; the social
+    # posterior: Eq. 5's.  The idle mode itself is not tempered.  Unlike
+    # inference_temperature (the models' softmax at a tau of its own, renormalised over the
+    # actions model by model), every likelihood ratio between two hypotheses is taken to the
+    # power alpha exactly.  1 (the default): Bayes' rule, Eqs. 5-6 as printed.  The hazards
+    # stay the prediction step between updates.  Folders ..._lpow<alpha>.
+    likelihood_power: float = 1.0
     # Everything the belief update computes, in the record (2026-11-04; the user: "just have
     # it put all diagnostics into the json file. All information for belief calculation
     # should be in the JSOn", and "Lets also add these to logs: Q_{d,xi}(s_t, a_t),
@@ -692,6 +706,10 @@ class Config:
         object.__setattr__(self, "cooperate_with", tuple(SOCIAL_GOALS[g] for g in partners))
         if isinstance(self.belief_lapse, (bool, np.bool_)) or not 0.0 <= self.belief_lapse < 1.0:
             raise ValueError("belief_lapse must be a number in [0, 1)")
+        if (isinstance(self.likelihood_power, (bool, np.bool_))
+                or not isinstance(self.likelihood_power, (int, float, np.integer, np.floating))
+                or not 0.0 < self.likelihood_power <= 1.0):
+            raise ValueError("likelihood_power must be a number in (0, 1]")
         for name in ("park_eps", "idle_eps"):
             if not 0.0 <= getattr(self, name) < 1.0:
                 raise ValueError(f"{name} must lie in [0, 1)")

@@ -1482,7 +1482,7 @@ class SocialMDP:
             return normalize_log(log_obj[self.pg_obj[j]] + log_dst[self.pg_dst[j]])
 
     def factored_posterior(self, j: int, post: np.ndarray, hard: np.ndarray,
-                           empty: bool) -> np.ndarray:
+                           empty: bool, alpha: float = 1.0) -> np.ndarray:
         """``Config.belief_factored``: the two posteriors about robot j after one action --
         ``post`` (PG,), unnormalised log, the prior times the likelihood of the action and
         the transition term; ``hard`` the prior times the transition term alone.  The
@@ -1492,10 +1492,20 @@ class SocialMDP:
         psi_(o,d)(a): the likelihood of the action under each, the other averaged out -- and
         the frozen one is the marginal of ``hard``: as it was, but for what the hands'
         outcomes ruled out.  Without the stages (``Config.belief_stages=False``) both
-        learn.  -> (PG,) the product, normalised."""
+        learn.  ``alpha`` (``Config.likelihood_power``): the learning factor's likelihood
+        taken to that power, b' ∝ b_hard (b_post / b_hard)^alpha.  -> (PG,) the product,
+        normalised."""
         stages = self.cfg.belief_stages
         lo_post, ld_post = self.factors(j, post)
         lo_hard, ld_hard = self.factors(j, hard)
+        if alpha != 1.0:                         # each factor's likelihood ratio ^ alpha
+            with np.errstate(invalid="ignore"):
+                lo_post = normalize_log(np.where(np.isfinite(lo_post),
+                                                 (1.0 - alpha) * lo_hard + alpha * lo_post,
+                                                 -np.inf))
+                ld_post = normalize_log(np.where(np.isfinite(ld_post),
+                                                 (1.0 - alpha) * ld_hard + alpha * ld_post,
+                                                 -np.inf))
         lo = lo_post if (empty or not stages) else lo_hard
         ld = ld_post if (not empty or not stages) else ld_hard
         return self.product(j, lo, ld)
@@ -1569,6 +1579,11 @@ class SocialMDP:
         object, the idle mode, the transition term, the posteriors before the hazards and
         the belief after -- for the record (``rollout``: the trace's "belief_update").
 
+        A tempered update (``Config.likelihood_power`` alpha, since 2026-11-04, 1 by default):
+        each posterior multiplied by its likelihood ^ alpha -- the learning factor's
+        likelihood under the two posteriors apart (:meth:`factored_posterior`), each
+        hypothesis's under the joint one, Eq. 5's for the social goals; the idle mode not.
+
         The likelihood's temperature (``Config.inference_temperature``, since 2026-11-04,
         None by default: Eq. 7's tau): the hypothesis models' softmax at tau_inf
         (:meth:`_log_policy`), in both posteriors.  The lapse (``Config.belief_lapse``,
@@ -1610,7 +1625,8 @@ class SocialMDP:
                 temperature=float(cfg.temperature_of(1 - j)),
                 inference_temperature=cfg.inference_temperature,
                 c_move=float(cfg.costs[0]), c_stay=float(cfg.costs[4]),
-                lapse=float(cfg.belief_lapse), likelihood=cfg.physical_likelihood,
+                lapse=float(cfg.belief_lapse), likelihood_power=float(cfg.likelihood_power),
+                likelihood=cfg.physical_likelihood,
                 factored=bool(cfg.belief_factored), stages=bool(cfg.belief_stages),
                 hypotheses=dict(object=self.pg_obj[j].copy(), destination=self.pg_dst[j].copy(),
                                 social=[G.goal_name(t) for t in self.hyp_goals[1 - j]]),
@@ -1645,13 +1661,17 @@ class SocialMDP:
         mix = _log_mix(lik, 1.0 - q0, l_idle, q0)                  # (PG,) log P(a | g)
         keep = self.transition_term(j, s, actions, nxt, event)
         hard = np.where(keep, prior, -np.inf)                     # the hands' outcomes alone
+        # Config.likelihood_power: the likelihood ^ alpha -- of the factor that learns
+        # (factored_posterior), or of each hypothesis of the joint posterior
+        alpha = float(cfg.likelihood_power)
         with np.errstate(invalid="ignore"):
-            post = np.where(keep, prior + mix, -np.inf)
+            post = np.where(keep, prior + (mix if factored or alpha == 1.0 else alpha * mix),
+                            -np.inf)
         explained = np.isfinite(post).any()
         if not explained:                        # nothing explains the action: the prior,
             post = hard                                       # less what the hands ruled out
         if np.isfinite(post).any():
-            new.log_phys = (self.factored_posterior(j, post, hard, empty) if factored
+            new.log_phys = (self.factored_posterior(j, post, hard, empty, alpha) if factored
                             else self._renormalize_stage(j, post, prior, empty))
         # the physical prior over the goals the transition term keeps (T(s^t | s^{t-1}, a)
         # is the same under every social goal given the physical one): what the idle mode
@@ -1684,7 +1704,7 @@ class SocialMDP:
         # ---- the social posterior (Eq. 5) ----------------------------------------------------
         if old.log_social is not None and not self.known_social:
             l_soc = self.social_log_likelihood(kept, log_pol)
-            post = old.log_social + _log_mix(l_soc, 1.0 - q0, l_idle, q0)
+            post = old.log_social + alpha * _log_mix(l_soc, 1.0 - q0, l_idle, q0)
             if np.isfinite(post).any():
                 new.log_social = normalize_log(post)
             if rec:

@@ -72,7 +72,8 @@ class FromTheRecordAlone(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.records = {"Eqs. 5-6": rolled(),
-                       "softened": rolled(inference_temperature=0.5, belief_lapse=0.05)}
+                       "softened": rolled(inference_temperature=0.5, belief_lapse=0.05,
+                                           likelihood_power=0.5)}
 
     def updates(self):
         for name, record in self.records.items():
@@ -181,7 +182,8 @@ class FromTheRecordAlone(unittest.TestCase):
                                     d["stage"] == "hands empty",
                                     np.array(d["hypotheses"]["object"]), cfg["idle_hazard"],
                                     d["stages"], d["factored"],
-                                    np.array(d["hypotheses"]["destination"]))
+                                    np.array(d["hypotheses"]["destination"]),
+                                    alpha=d["likelihood_power"])
             np.testing.assert_allclose(arr(d["posterior"]["phys"]), want[0], atol=1e-10,
                                        err_msg=f"{name} step {row['step']} robot {i}")
             np.testing.assert_allclose(arr(d["social_posterior"]), want[1], atol=1e-10)

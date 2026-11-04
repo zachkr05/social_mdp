@@ -101,7 +101,8 @@ def print_update(d: dict, i: int, actions, args) -> None:
           f"{'' if d['stages'] else ', no stages'}")
     print(f"  units: c(move) = {d['c_move']:g}, c(stay) = {d['c_stay']:g} reward units; "
           f"tau = {d['tau']:g} reward units ({d['tau'] / d['c_move']:g} x c(move)) for the "
-          f"likelihood, {d['tau_planning']:g} for planning; lapse {d['lapse']:g}; hazards "
+          f"likelihood, {d['tau_planning']:g} for planning; lapse {d['lapse']:g}; likelihood "
+          f"^{d.get('likelihood_power', 1.0):g} in the update; hazards "
           + ", ".join(f"{k} {v:g}" for k, v in d["hazards"].items()))
     obj = np.array(d["hypotheses"]["object"], dtype=int)
     dst = np.array(d["hypotheses"]["destination"], dtype=int)

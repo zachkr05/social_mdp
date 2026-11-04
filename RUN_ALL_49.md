@@ -102,6 +102,7 @@ likelihood"). Two options, off by default (Eqs. 5-6 as printed), in `run_tau_gri
 
     INFTAU=0.5 HAZARD=0.02 sh run_testbed.sh     # the likelihood at tau_inf = 0.5 c(move); folders ..._inftau0.5_hazard0.02
     LAPSE=0.05 HAZARD=0.02 sh run_testbed.sh     # a lapse of 0.05 in it; folders ..._lapse0.05_hazard0.02
+    LPOW=0.25 HAZARD=0.02 sh run_testbed.sh      # a tempered update, likelihood ^ 0.25; folders ..._lpow0.25_hazard0.02
 
 `INFTAU` (`--inference-temperature`, `Config.inference_temperature`): the hypothesis models'
 softmax at $\tau_{inf}$ for the belief update only (the robots plan and act at Eq. 7's tau);
