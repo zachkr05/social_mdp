@@ -667,6 +667,9 @@ def rollout(world: ObjectWorld, goal_ids: Sequence[int], solo_steps: Sequence[in
             run.trace[-1]["seen_as"] = tuple(list(mdp.observed_actions(act, s, nxt, i))
                                              for i in (0, 1))
         mdp.observe(act, s, nxt, event)
+        if mdp.last_update is not None:          # Config.belief_detail: the update's workings,
+            run.trace[-1]["belief_update"] = tuple(mdp.last_update[1 - i]   # robot i's about
+                                                   for i in (0, 1))       # its partner
         run.trace[-1]["next_belief"] = tuple(mdp.goal_belief(i).copy() for i in (0, 1))
         if mdp.infer_object:
             run.trace[-1]["next_object_belief"] = tuple(mdp.object_belief(i).copy()

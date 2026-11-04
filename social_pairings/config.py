@@ -86,6 +86,7 @@ ADDED_FIELDS = dict(
     belief_factored=False,         # 2026-11-04 (one joint physical posterior, b(d | o) apart)
     lazy_mass=0.0,                 # 2026-11-04 (every hypothesis model solved every transition)
     lazy_period=5,                 # 2026-11-04
+    belief_detail=False,           # 2026-11-04 (no record of the belief update's workings)
 )
 
 
@@ -511,6 +512,21 @@ class Config:
     # belief layer of then (0.05 by default there); back as an option, 0 by default (Eqs. 5-6
     # as printed).  Folders ..._lapse<e>.
     belief_lapse: float = 0.0
+    # Everything the belief update computes, in the record (2026-11-04; the user: "just have
+    # it put all diagnostics into the json file. All information for belief calculation
+    # should be in the JSOn", and "Lets also add these to logs: Q_{d,xi}(s_t, a_t),
+    # max_a' Q_{d,xi}(s_t, a'), P(a_t | s_t, d), b_t(d), b_{t+1}(d)"): each trace row's
+    # "belief_update", per robot as "belief" is (entry i: robot i's update about its
+    # partner) -- the units (tau and the costs in reward units), the hypotheses, the belief
+    # before, every hypothesis model's Q at the state for all ten actions and what it made of
+    # the action taken (its Q, the best Q and that action, the gap, psi of the action before
+    # and after the lapse), Eq. 6's likelihood per hypothesis, per destination and per object
+    # (with and without the idle mode), the idle mode, the transition term, Eq. 5's
+    # likelihoods, the posteriors before the hazards and the belief after
+    # (models.SocialMDP.updated_belief).  It changes nothing in the rollout, only the size of
+    # its record, so --resume keeps a record made without it.  tools/belief_step.py prints a
+    # step of it.  False: the record of before.
+    belief_detail: bool = True
     # Lazy hypotheses (2026-11-04; the user: "parallelize the S-MDP so it runs substantially
     # faster").  Of the level-1 models a level-2 robot holds as hypotheses about its partner
     # (12 physical goals x 7 social goals = 84 per robot at the 49's settings; nine tenths of
@@ -642,6 +658,8 @@ class Config:
             raise ValueError("hinder_own_goal must be True or False")
         if not isinstance(self.belief_stages, (bool, np.bool_)):
             raise ValueError("belief_stages must be True or False")
+        if not isinstance(self.belief_detail, (bool, np.bool_)):
+            raise ValueError("belief_detail must be True or False")
         if not isinstance(self.value_maps, (bool, np.bool_)):
             raise ValueError("value_maps must be True or False")
         if isinstance(self.seed, bool) or not isinstance(self.seed, (int, np.integer)):

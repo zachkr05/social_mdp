@@ -63,6 +63,9 @@
 # INFTAU (since 2026-11-04; Config.inference_temperature, default none = Eq. 7's tau: the
 # likelihood of the belief update at a tau of its own, INFTAU x c(move) -- 0.5 is Baker, Saxe
 # & Tenenbaum 2009's fit to people; the robots still plan at tau; folders ..._inftau<T>),
+# NODETAIL (1: Config.belief_detail=False -- the records without each step's "belief_update",
+# the belief update's workings, every hypothesis model's Q among them; by default they hold it,
+# some MB a rollout; tools/belief_step.py reads it),
 # LAPSE (since 2026-11-04; Config.belief_lapse, default 0: a lapse in the likelihood -- each
 # hypothesis model's policy read as (1 - E) psi + E / |A|, so one odd move costs a hypothesis
 # at most a factor of about |A| / E; folders ..._lapse<E>),
@@ -99,6 +102,7 @@ FLAGS="--levels 2 2 --objects inferred --steal --foreign-carry-cost 1 --inertia 
 [ -n "$LAZY" ] && FLAGS="$FLAGS --lazy $LAZY"     # lazy hypotheses (2026-11-04; folders _lazy<MASS>)
 [ "${JOINT:-0}" = 1 ] && FLAGS="$FLAGS --joint-posterior"   # one joint (object, destination) posterior, the rule until 2026-11-04
 [ -n "$MEM" ] && FLAGS="$FLAGS --max-memory-gib $MEM"   # (not in the folder name: same model)
+[ "${NODETAIL:-0}" = 1 ] && FLAGS="$FLAGS --no-belief-detail"   # records without the belief update's workings
 EXTRA="--steps ${STEPS:-60}"
 [ "${NOVIDEO:-1}" = 1 ] && EXTRA="$EXTRA --no-video"
 [ "${VERBOSE:-0}" = 1 ] && EXTRA="$EXTRA --verbose"   # a line per transition in each rollout's log

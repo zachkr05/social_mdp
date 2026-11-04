@@ -173,8 +173,9 @@ def stem(pair) -> str:
     return f"{pair[0]}__{pair[1]}"
 
 
-# options a record may differ in and still be the rollout asked for: the machine's
-MACHINE = ("num_threads", "max_memory_gib", "verbose")
+# options a record may differ in and still be the rollout asked for: the machine's, and what
+# the record holds of the belief update's workings (Config.belief_detail, 2026-11-04)
+MACHINE = ("num_threads", "max_memory_gib", "verbose", "belief_detail")
 # the hazards of the partner's goal (2026-11-02), as the video titles and the tables name them
 HAZARD_LABELS = dict(goal_hazard="hazard", social_hazard="social hazard",
                      hand_hazard="hand hazard")
@@ -512,6 +513,12 @@ def main() -> None:
                              "move costs a hypothesis at most a factor of about |A| / E (100 at "
                              "E = 0.05 and five moves) instead of e^(-dQ / tau).  Default 0: "
                              "Eqs. 5-6 as printed (folders ..._lapse<E>)")
+    parser.add_argument("--no-belief-detail", action="store_true",
+                        help="Config.belief_detail=False: leave the belief update's workings out "
+                             "of the record (by default every step's \"belief_update\" holds them "
+                             "-- every hypothesis model's Q, Eq. 6's likelihoods, the beliefs "
+                             "before and after -- some MB a rollout; tools/belief_step.py reads "
+                             "it).  Not in the folder name: the same rollout")
     parser.add_argument("--lazy", type=float, default=0.0, metavar="MASS",
                         help="Config.lazy_mass (since 2026-11-04): of a level-2 robot's hypothesis "
                              "models about its partner, the lightest ones whose mass in its two "
@@ -586,6 +593,8 @@ def main() -> None:
     # lazy hypotheses (2026-11-04): an approximation of the solve, so it names its folder
     if args.lazy > 0.0:
         options = dict(options, lazy_mass=args.lazy, lazy_period=args.lazy_period)
+    if args.no_belief_detail:                   # (not in the folder name: same rollout)
+        options = dict(options, belief_detail=False)
     if args.max_memory_gib is not None:         # (not in the folder name: same model)
         options = dict(options, max_memory_gib=args.max_memory_gib)
     if args.verbose:

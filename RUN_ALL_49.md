@@ -68,6 +68,28 @@ level 2, tau 0.1, 16 transitions, 2 threads): 350 s against 691 s exact, the sam
 actions, but not the same beliefs -- from transition 9 agent_1 reads its partner as "none" 0.91
 where the exact run reads "conflict" 1.00. Not safe as it is; off by default.
 
+## The belief update's workings in every record (2026-11-04)
+
+Every record now holds, step by step, what the belief update computed (`Config.belief_detail`,
+on by default; `NODETAIL=1` leaves it out): every hypothesis model's Q at the state, Eqs. 5-6's
+likelihoods per hypothesis, destination and object, the beliefs before and after, and the units
+(tau and the costs in reward units). Read a step with
+
+    python3 tools/belief_step.py output/object_inference_<...>/hinder__cooperation__inferred.json --step 48 --dest G1 G4 G5
+
+(the video's step). To see steps 38 and 48 of the testbed's hinder / cooperation at
+`hall_crossing` (tau 0.1, hazard 0.02, the joint posterior of then), roll that one out again
+under the options of then -- the same code path, so the same course, now with its workings:
+
+    mv output/object_inference_hall_crossing_w1_1_selective_level2_levels2_2_swap_steal_tau0.1_carry1_spoiler_inertia1_hands5_staged_byhand_pick3x2_hand2_eq56_hazard0.02/hinder__cooperation__inferred.json{,.before}
+    TAUS="0.1" GOALS2="cooperation" GATE="" HOUSE="hall_crossing" JOINT=1 HAZARD=0.02 NOVIDEO=0 \
+        HOUSE_THREADS=2 MAX_THREADS=2 sh run_testbed.sh
+
+(`--resume` would keep the record of before, which has no workings: hence the `mv`.) Two
+threads as the record of before was made with (4.2 h): the kernels' sums run in another order
+on another number of threads, and the course turns on near ties (red's up and right at step 39
+differ by 1e-5), so more threads may give another course -- faster, and still worth reading.
+
 ## A softer likelihood: `INFTAU`, `LAPSE` (options, 2026-11-04)
 
 On the testbed's hinder / cooperation at `hall_crossing` (tau 0.1, hazard 0.02) the hinderer's

@@ -285,7 +285,8 @@ def main() -> None:
         result = load_result(path)
         mine = to_json(dataclasses.asdict(cfg))
         theirs = written_with(result.get("config") or {})
-        if any(theirs.get(key) != value for key, value in mine.items() if key != "num_threads"):
+        if any(theirs.get(key) != value for key, value in mine.items()
+               if key not in ("num_threads", "belief_detail")):   # (not the model)
             raise SystemExit(f"--resume: {path} was written with another configuration; "
                              "pass the flags it was written with, or another --output")
         if action_names(result) != ACTION_NAMES:

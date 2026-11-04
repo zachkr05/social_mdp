@@ -122,6 +122,22 @@ def _log_mix(log_a: np.ndarray, wa: float, log_b, wb: float) -> np.ndarray:
         return np.logaddexp(la, lb)
 
 
+def _model_summary(q: np.ndarray, log_pol: np.ndarray, a: int) -> dict:
+    """What a set of models (..., 10) made of the action a, for the record
+    (Config.belief_detail): every action's Q; the Q of a, the best Q and the action that has
+    it, and their gap (reward units); log psi(a) at the likelihood's tau, before the lapse.
+    NaN where a model was not consulted (its physical goal ruled out), -inf where an action
+    is not open -- both null in the JSON."""
+    with np.errstate(invalid="ignore"):
+        best = np.where(np.isnan(q).all(-1, keepdims=True), np.nan,
+                        np.max(np.where(np.isnan(q), -np.inf, q), axis=-1, keepdims=True))[..., 0]
+        best_action = np.where(np.isnan(best), -1,
+                               np.argmax(np.where(np.isfinite(q), q, -np.inf), axis=-1))
+        taken = q[..., a]
+        return dict(q=q, q_taken=taken, q_best=best, best_action=best_action,
+                    q_gap=best - taken, log_psi=log_pol[..., a])
+
+
 def mix_uniform(log_b: np.ndarray, h: float) -> np.ndarray:
     """log((1 - h) b + h u): the distribution ``exp(log_b)`` (normalised here) mixed with the
     uniform u over its support, its finite entries; the others stay -inf (Config.goal_hazard:
@@ -418,6 +434,9 @@ class SocialMDP:
         self.last_solved = {1: np.full(self.L1.M, -1, dtype=np.int64),
                             2: np.full(self.L2.M, -1, dtype=np.int64)}
         self.lazy_info = None
+        # what the last update computed, per robot j about which it was made
+        # (Config.belief_detail; observe, updated_belief)
+        self.last_update = None
 
     # ---- construction ------------------------------------------------------------------------
     def _initial_belief(self, j: int) -> PartnerBelief:
@@ -1262,7 +1281,13 @@ class SocialMDP:
         updates -- or, under ``Config.inference_temperature`` (since 2026-11-04), at that
         tau; -inf where illegal.  (The robots' own planning reads the models at Eq. 7's
         tau, from the kernels' stored policies.)"""
-        return log_softmax(self.q_values(model, s, robot) / self.inference_taus[1 - robot])
+        return self._q_and_log_policy(model, s, robot)[1]
+
+    def _q_and_log_policy(self, model: Tuple[int, int], s: int,
+                          robot: int) -> Tuple[np.ndarray, np.ndarray]:
+        """(Q, log policy) of :meth:`_log_policy`, both (10,), -inf where illegal."""
+        q = self.q_values(model, s, robot)
+        return q, log_softmax(q / self.inference_taus[1 - robot])
 
     def lapsed(self, log_pol: np.ndarray) -> np.ndarray:
         """(10,) the likelihood a policy gives each action under the lapse
@@ -1279,30 +1304,51 @@ class SocialMDP:
             return np.where(allowed, np.logaddexp(np.log1p(-e) + log_pol, np.log(e / n)),
                             -np.inf)
 
-    def physical_log_likelihood(self, j: int, s: int, a: int) -> np.ndarray:
+    def physical_log_likelihood(self, j: int, s: int, a: int,
+                                detail: Optional[dict] = None) -> np.ndarray:
         """(PG,) log psi^0_{j,g}(a | s) of robot j's level-0 model under each of its physical
         goals: the likelihood of Eq. 6 (the authors' physical-goal estimation); under the
-        lapse (``Config.belief_lapse``), :meth:`lapsed`."""
+        lapse (``Config.belief_lapse``), :meth:`lapsed`.  ``detail`` (a dict): each model's Q
+        at s goes into its "level0" entry (``Config.belief_detail``)."""
         K = self.PG
-        return np.array([self.lapsed(self._log_policy((0, j * K + g), s, j))[a]
-                         for g in range(K)])
+        qs, lps, out = [], [], np.full(K, -np.inf)
+        for g in range(K):
+            q, lp = self._q_and_log_policy((0, j * K + g), s, j)
+            out[g] = self.lapsed(lp)[a]
+            qs.append(q)
+            lps.append(lp)
+        if detail is not None:
+            detail["level0"] = dict(_model_summary(np.array(qs), np.array(lps), a),
+                                    log_lik=out.copy())
+        return out
 
-    def hypothesis_log_policies(self, j: int, s: int, a: int, log_phys: np.ndarray) -> np.ndarray:
+    def hypothesis_log_policies(self, j: int, s: int, a: int, log_phys: np.ndarray,
+                                detail: Optional[dict] = None) -> np.ndarray:
         """(PG, n_types) log psi^1_{j,(g,t)}(a | s) of robot j's level-1 hypothesis models
         (-inf for a physical goal the posterior ``log_phys`` has ruled out: its models are
         not kept); under the lapse (``Config.belief_lapse``), :meth:`lapsed`.  Both posteriors
-        read them: Eq. 6 averaged over the social posterior, Eq. 5 over the physical one."""
+        read them: Eq. 6 averaged over the social posterior, Eq. 5 over the physical one.
+        ``detail`` (a dict): every model's Q at s goes into its "models" entry, (PG, n_types,
+        10), NaN for the physical goals ruled out (``Config.belief_detail``)."""
         hyp = self.hyp_goals[1 - j]
         rows: dict = {}
         out = np.full((self.PG, len(hyp)), -np.inf)
+        rec = detail is not None
+        q_all = np.full((self.PG, len(hyp), N_ACTIONS), np.nan) if rec else None
+        lp_all = np.full((self.PG, len(hyp), N_ACTIONS), np.nan) if rec else None
         for g in range(self.PG):
             if not np.isfinite(log_phys[g]):
                 continue
             for t in range(len(hyp)):
                 r = self.hypothesis_row(j, g, t)
                 if r not in rows:
-                    rows[r] = self.lapsed(self._log_policy((1, r), s, j))
-                out[g, t] = rows[r][a]
+                    q, lp = self._q_and_log_policy((1, r), s, j)
+                    rows[r] = (q, lp, self.lapsed(lp))
+                out[g, t] = rows[r][2][a]
+                if rec:
+                    q_all[g, t], lp_all[g, t] = rows[r][0], rows[r][1]
+        if rec:
+            detail["models"] = dict(_model_summary(q_all, lp_all, a), log_lik=out.copy())
         return out
 
     def social_log_likelihood(self, log_phys: np.ndarray, log_pol: np.ndarray) -> np.ndarray:
@@ -1492,7 +1538,8 @@ class SocialMDP:
                 out[sel] = post[sel] - total + had
         return normalize_log(out)
 
-    def updated_belief(self, j: int, s: int, actions, nxt, event: dict) -> PartnerBelief:
+    def updated_belief(self, j: int, s: int, actions, nxt, event: dict,
+                       detail: Optional[dict] = None) -> PartnerBelief:
         """Eqs. 5-6 about robot j after the joint action ``actions`` at joint state s,
         landing in ``nxt``: the physical posterior from robot j's level-1 hypothesis
         policies averaged over the social posterior as it was (Eq. 6 as printed;
@@ -1515,6 +1562,13 @@ class SocialMDP:
         joint posterior staged as until then (:meth:`staged_log_likelihood`,
         :meth:`_renormalize_stage`).
 
+        ``detail`` (a dict; ``Config.belief_detail``, since 2026-11-04): filled with
+        everything the update computes -- the units (tau, the costs), the hypotheses, the
+        belief before, every hypothesis model's Q at s and what it makes of the action
+        (``_model_summary``), Eq. 6's likelihood per hypothesis, per destination and per
+        object, the idle mode, the transition term, the posteriors before the hazards and
+        the belief after -- for the record (``rollout``: the trace's "belief_update").
+
         The likelihood's temperature (``Config.inference_temperature``, since 2026-11-04,
         None by default: Eq. 7's tau): the hypothesis models' softmax at tau_inf
         (:meth:`_log_policy`), in both posteriors.  The lapse (``Config.belief_lapse``,
@@ -1533,12 +1587,36 @@ class SocialMDP:
         old = self.about[j]
         new = old.copy()
         st = w.unsid(s)
+        rec = detail is not None                 # Config.belief_detail: what this computes
+        if rec:
+            detail.update(reader=1 - j, about=j, action=int(actions[j]),
+                          prior=self._belief_record(j, old))
         if w.busy[st[2], j]:
+            if rec:
+                detail.update(skipped="lifting: nothing is learnt while the partner lifts",
+                              after=self._belief_record(j, new))
             return new
         a = int(actions[j])
         q0 = float(old.idle)
         l_idle = self._log_idle(j, s, a)
         empty = self._stage(j, s)
+        if rec:
+            detail.update(
+                stage="hands empty" if empty else "holding or lifting",
+                # the units: Q, tau and the costs in reward units; a move's cost c(move) =
+                # move_cost_rate x dt, tau = temperature x c(move) (temperature_unit
+                # "move_cost"); the likelihood's tau, and Eq. 7's that the robots plan at
+                tau=float(self.inference_taus[1 - j]), tau_planning=float(self.taus[1 - j]),
+                temperature=float(cfg.temperature_of(1 - j)),
+                inference_temperature=cfg.inference_temperature,
+                c_move=float(cfg.costs[0]), c_stay=float(cfg.costs[4]),
+                lapse=float(cfg.belief_lapse), likelihood=cfg.physical_likelihood,
+                factored=bool(cfg.belief_factored), stages=bool(cfg.belief_stages),
+                hypotheses=dict(object=self.pg_obj[j].copy(), destination=self.pg_dst[j].copy(),
+                                social=[G.goal_name(t) for t in self.hyp_goals[1 - j]]),
+                idle_log_lik=float(l_idle),
+                hazards=dict(goal=float(cfg.goal_hazard), social=float(cfg.social_hazard),
+                             hand=float(cfg.hand_hazard), idle=float(cfg.idle_hazard)))
         # the prior of this update: before a hand action's evidence, the factor it speaks to
         # mixed toward the uniform (Config.hand_hazard; a hand action is open to robot j only
         # in the stage it speaks to: pick and take with empty hands, place, give and swap
@@ -1547,8 +1625,10 @@ class SocialMDP:
         if cfg.hand_hazard > 0.0 and a >= PICK:
             prior = self.hazard_phys(j, prior, cfg.hand_hazard, objects=empty)
             new.log_phys = prior.copy()
+            if rec:
+                detail["after_hand_hazard"] = self._phys_record(j, prior)
         # ---- the physical posterior (Eq. 6) ---------------------------------------------------
-        log_pol = (self.hypothesis_log_policies(j, s, a, prior)
+        log_pol = (self.hypothesis_log_policies(j, s, a, prior, detail)
                    if old.log_social is not None else None)
         if cfg.physical_likelihood == "level1" and log_pol is not None:
             # the paper's Eq. 6 as printed: the level-1 models' likelihood, averaged over
@@ -1556,7 +1636,7 @@ class SocialMDP:
             with np.errstate(invalid="ignore"):
                 raw = np.array([_log_sum(old.log_social + log_pol[g]) for g in range(self.PG)])
         else:                                    # the authors' code: the level-0 policies
-            raw = self.physical_log_likelihood(j, s, a)
+            raw = self.physical_log_likelihood(j, s, a, detail)
         factored = cfg.belief_factored
         # the two posteriors apart (Config.belief_factored): each hypothesis's own likelihood,
         # the factor that does not learn averaged out by the marginal below; one joint
@@ -1581,6 +1661,12 @@ class SocialMDP:
             kept = normalize_log(kept)
         else:
             kept = prior
+        if rec:
+            detail.update(phys_log_lik=raw.copy(),                  # Eq. 6, before the stages
+                          **({} if factored else dict(staged_log_lik=lik.copy())),
+                          mix_log_lik=mix.copy(),                   # ... with the idle mode
+                          transition_term=keep.copy(), explained=bool(explained),
+                          kept=np.exp(kept), posterior=self._phys_record(j, new.log_phys))
         # ---- the idle mode ---------------------------------------------------------------------
         if cfg.idle_hypothesis:
             if explained:
@@ -1593,12 +1679,17 @@ class SocialMDP:
                 q1 = q0
             h = cfg.idle_hazard
             new.idle = q1 * (1.0 - h) + (1.0 - q1) * h
+            if rec:
+                detail.update(idle_posterior=float(q1))
         # ---- the social posterior (Eq. 5) ----------------------------------------------------
         if old.log_social is not None and not self.known_social:
             l_soc = self.social_log_likelihood(kept, log_pol)
             post = old.log_social + _log_mix(l_soc, 1.0 - q0, l_idle, q0)
             if np.isfinite(post).any():
                 new.log_social = normalize_log(post)
+            if rec:
+                detail.update(social_log_lik=l_soc.copy(),
+                              social_posterior=np.exp(new.log_social))
         # ---- the partner's goal may change: the prediction step for the next transition ------
         # (Config.goal_hazard, social_hazard; Baker, Saxe & Tenenbaum 2009, M2): each
         # posterior mixed toward the uniform over the hypotheses it still holds possible --
@@ -1608,13 +1699,55 @@ class SocialMDP:
                                             objects=not self._holds_next(j, nxt))
         if cfg.social_hazard > 0.0 and new.log_social is not None and not self.known_social:
             new.log_social = mix_uniform(new.log_social, cfg.social_hazard)
+        if rec:
+            detail["after"] = self._belief_record(j, new)
+            detail.update(self._by_factor(j, raw, mix, prior, detail))
         return new
+
+    def _by_factor(self, j: int, raw: np.ndarray, mix: np.ndarray, prior: np.ndarray,
+                   detail: dict) -> dict:
+        """Per destination and per object, for the record (Config.belief_detail): the
+        likelihood of the action (Eq. 6, the other factor averaged out under the prior --
+        P(a | d) = sum_o b_t(o) P(a | o, d), P(a | o) = sum_d b_t(d) P(a | o, d) -- and the same
+        with the idle mode mixed in), the belief before (b_t), the posterior before the
+        hazards, and the belief after (b_{t+1})."""
+        lo, ld = self.factors(j, prior)
+        obj, dst = self.pg_obj[j], self.pg_dst[j]
+        out = {}
+        for name, n, own, other, w_other in (("by_destination", self.w.K, dst, obj, lo),
+                                             ("by_object", self.w.M, obj, dst, ld)):
+            lik, lik_idle = np.full(n, -np.inf), np.full(n, -np.inf)
+            with np.errstate(invalid="ignore"):
+                for v in np.unique(own):
+                    sel = own == v
+                    lik[v] = _log_sum(w_other[other[sel]] + raw[sel])
+                    lik_idle[v] = _log_sum(w_other[other[sel]] + mix[sel])
+            key = "destination" if name == "by_destination" else "object"
+            out[name] = dict(log_lik=lik, log_lik_with_idle=lik_idle,
+                             prior=detail["prior"][key], posterior=detail["posterior"][key],
+                             after=detail["after"][key])
+        return out
+
+    def _phys_record(self, j: int, log_phys: np.ndarray) -> dict:
+        """A physical belief about robot j for the record: over the (object, destination)
+        hypotheses, and its two marginals (Config.belief_detail)."""
+        lo, ld = self.factors(j, log_phys)
+        return dict(phys=np.exp(log_phys), object=np.exp(lo), destination=np.exp(ld))
+
+    def _belief_record(self, j: int, b: "PartnerBelief") -> dict:
+        """All of a belief about robot j for the record (Config.belief_detail)."""
+        return dict(self._phys_record(j, b.log_phys),
+                    social=None if b.log_social is None else np.exp(b.log_social),
+                    idle=float(b.idle))
 
     def observe(self, actions, s: int, nxt, event: dict) -> None:
         """Eqs. 5-6 for both robots after the joint action ``actions`` at joint state s --
-        each posterior from the beliefs as they were."""
-        updates = [self.updated_belief(j, s, actions, nxt, event) for j in (0, 1)]
+        each posterior from the beliefs as they were.  Under ``Config.belief_detail`` what
+        each update computed is kept in ``last_update[j]`` (the update about robot j)."""
+        details = [dict(), dict()] if self.cfg.belief_detail else [None, None]
+        updates = [self.updated_belief(j, s, actions, nxt, event, details[j]) for j in (0, 1)]
         self.about = updates
+        self.last_update = tuple(details) if self.cfg.belief_detail else None
 
     # ---- the reward a robot's own model gives the realised transition ------------------------
     def _stored_log_likelihood(self, slot: BeliefSlot, s: int, a_obs: int) -> np.ndarray:

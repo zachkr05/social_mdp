@@ -2164,6 +2164,45 @@ Both were devices of the belief layer until 2026-10-30 (an inference temperature
 lapse of 0.05 by default there) and went with it; they are back as options. With both, the
 lapse acts on the policy at $\tau_{inf}$.
 
+## The belief update's workings in the record (since 2026-11-04)
+
+The user: "just have it put all diagnostics into the json file. All information for belief
+calculation should be in the JSOn", and "record $Q_{d,\xi}(s_t,a_t)$, $\max_{a'}Q_{d,\xi}(s_t,a')$,
+$P(a_t\mid s_t,d)$, $b_t(d)$, $b_{t+1}(d)$ ... separately for each social-goal hypothesis".
+`Config.belief_detail` (default on; `--no-belief-detail`, `NODETAIL=1` leave it out): each
+trace row's `belief_update[i]` is robot $i$'s update about its partner ($i$ as in `belief`):
+
+- **units**: `tau` (the likelihood's, in reward units), `tau_planning` (Eq. 7's), `temperature`
+  (in moves' costs), `inference_temperature`, `c_move`, `c_stay`, `lapse`, `hazards`; and
+  `stage`, `likelihood`, `factored`, `stages`;
+- **hypotheses**: the object and destination of each physical hypothesis $g$, the social goals;
+- **beliefs**: `prior` ($b_t$: `phys` over $g$, `object`, `destination`, `social`, `idle`),
+  `after_hand_hazard` where a hand hazard applied, `posterior` (before the hazards), `after`
+  ($b_{t+1}$), `social_posterior`, `idle_posterior`;
+- **every hypothesis model** (`models`, $(g, \xi, 10)$; `level0` under the level-0 likelihood):
+  `q` (every action's Q at the state), `q_taken`, `q_best`, `best_action`, `q_gap`, `log_psi`
+  ($\log\psi(a_t)$ at `tau`, before the lapse), `log_lik` (after it);
+- **likelihoods**: `phys_log_lik` (Eq. 6 per $g$), `staged_log_lik` (the joint posterior's),
+  `mix_log_lik` (with the idle mode), `idle_log_lik`, `social_log_lik` (Eq. 5), and
+  `by_destination` / `by_object`: $P(a_t \mid d) = \sum_o b_t(o) P(a_t \mid o, d)$ (and per
+  object the same over the destinations), with the idle mode, beside $b_t$, the posterior and
+  $b_{t+1}$;
+- **the hands**: `transition_term` (Eq. 5's, per $g$), `explained`, `kept`.
+
+`null` in the JSON is $-\infty$ (an action not open to a model, a likelihood of 0) or a model
+not consulted (its physical goal ruled out). Lists of numbers are now written on one line each
+(`serialize.save_result`), which takes a record of before to about 70 % of its size; with the
+workings a tier-scene rollout of 55 steps is some 4 MB (estimated from the tiny scene).
+`tests/test_belief_detail.py` recomputes every update of a rollout from its record alone.
+
+    python3 tools/belief_step.py RECORD.json --step 38 --dest G1 G4 G5    # the video's step
+
+prints, for both robots (or `--robot agent_1`), per destination and object $P(a_t \mid \cdot)$,
+$b_t$, the posterior and $b_{t+1}$; per social goal held at 0.01 or more (`--all-social`: every
+one) and model, $Q(a_t)$, $\max Q$ and its action, the gap in reward units and moves' costs,
+$\psi(a_t)$ before and after the lapse, and every action's Q; Eq. 5; the idle mode; and checks
+Eq. 6 recomputed from the models against the recorded one.
+
 ## The object's posterior and the destination's apart (since 2026-11-04)
 
 The user, on a video of hinder / cooperation on `head_on_blocked_goal` (tau 0.1, hazard 0.02),
@@ -4050,6 +4089,7 @@ every mix of levels ("Results").
 | `condition_on_placement` | `True` | Eq. 5's transition term: what the hands reveal of the partner's goal -- its finishing, its own set-down that did nothing, the robot's set-down for it that counted or failed, a hand-over it took or not -- rules out the hypotheses that predicted otherwise ("The belief update of 2026-10-30"). `False`: the actions alone |
 | `inference_temperature` | `None` | the likelihood of Eqs. 5-6 at a tau of its own, $T \times c(\text{move})$: the hypothesis models' softmax at it, $\psi^\eta$ renormalised, $\eta = \tau/\tau_{inf}$; the robots still plan at Eq. 7's tau. `None`: Eq. 7's tau, Eqs. 5-6 as printed ("A softer likelihood"; an option since 2026-11-04; a device of before 2026-10-30, 0.5 there). Folders `..._inftau<T>` |
 | `belief_lapse` | `0` | a lapse in the likelihood: each model's policy read as $(1-\varepsilon)\psi + \varepsilon/|A|$, so that one step moves no hypothesis by more than about $|A|/\varepsilon$ ("A softer likelihood"; an option since 2026-11-04; a device of before 2026-10-30, 0.05 there). Folders `..._lapse<E>` |
+| `belief_detail` | `True` | every step's belief update in the record, trace `belief_update`: every hypothesis model's Q and what it made of the action, Eqs. 5-6's likelihoods per hypothesis, destination and object, the beliefs before and after ("The belief update's workings in the record"; since 2026-11-04; `tools/belief_step.py` prints a step). Not part of the model: `--resume` keeps a record made without it. `False` (`--no-belief-detail`, `NODETAIL=1`): the record of before |
 | `partner_delivers`, `partner_parks`, `partner_observed`, `social_belief`, `child_conditioning` | `False`, `False`, `"action"`, `"marginals"`, `False` | the devices of before 2026-10-30, gone: the carry and park tables, the "outcome" observation, the joint posterior, the conditioning of the partner's estimate on the robot's action inside $\tilde R_j$. Kept only so that the records of before can be read; `Config` raises on any other value (`BELIEF_DEVICES`). (The lapse and the belief temperature of then are options again: above) |
 | `exchange_share` | `0.25` | $n$ of the exchange row |
 | `physical_level` | `0` | the default level of a robot with a physical goal only (no social goal, or weight 0): 0, a plain MDP with nothing inferred (since 2026-10-08); 2, the default until then. A level asked for is used either way |
