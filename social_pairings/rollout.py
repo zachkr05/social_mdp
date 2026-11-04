@@ -426,6 +426,7 @@ def _transition(mdp: SocialMDP, run: _Run, t: int, n_steps: int, uniforms: np.nd
         social_belief=tuple(None if b is None else b.copy() for b in social_beliefs),
         value_maps=tuple(maps),
         idle_belief=tuple(mdp.idle_belief(i) for i in (0, 1)),
+        **(dict(lazy=mdp.lazy_info) if cfg.lazy_mass > 0.0 else {}),
         stage=stage,
         done=tuple(bool(w.done[block, i]) for i in (0, 1)),
         blocked=blocked,

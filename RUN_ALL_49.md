@@ -13,22 +13,89 @@ and at the same tau (each of `TAUS`, default 0.1, 0.15, 0.2), at the 49's settin
 | `head_on_blocked_goal`, `head_on_corridor` | tier high: someone must give way | 480,557 | 15.6 GiB |
 
 The six are the meeting suite of `examples/tier_scenes.py`, the fair placements on the 0.5 m
-house (79 free cells, six candidate destinations, no hand-off cells). 7 x 7 x 3 = 147 rollouts.
-The script runs two pools at once: the gate scene's (`GATE_WORKERS`, default a third of 90 % of
-the memory in rollouts of `MEM_GATE` = 72 GiB, `GATE_THREADS` = 4) and the house's (the rest of
-the memory in rollouts of `MEM_HOUSE` = 18 GiB, the rest of the CPUs); on 755 GiB and 64 CPUs
-that is 3 x 4 and 25 x 2. Every rollout is its own job, so every scene and every tau start at
-once. Times are estimates, scaled from the two-room scene's 10-40 minutes on 2 threads: a tier
-scene some 1.5-5 h on 2 threads, the gate some 2-8 h on 4. Time one of each first:
+house (79 free cells, six candidate destinations, no hand-off cells). 7 x 7 x 4 = 196 rollouts
+(`TAUS` default 0.1, 0.15, 0.2, 0.25 since 2026-11-03). On cheetah05 on 2026-11-03 (25 house
+rollouts and 3 gate ones at once) the first house transition took 602 s on 2 threads.
+
+**One queue, since 2026-11-04** (`tools/schedule.py`; the user: "parallelize the S-MDP so it
+runs substantially faster"). Every rollout is its own job; a job starts whenever its memory
+(`MEM_GATE` = 72 GiB for the gate scene, `MEM_HOUSE` = 18 for the house) and threads fit, the
+gate's big ones first with the free CPUs shared out among them (`GATE_THREADS` = 4 at least,
+`MAX_THREADS` = 8 at most), the house's small ones (`HOUSE_THREADS` = 2) filling in and taking
+over as the gate's finish -- the whole machine busy to the end, where the two fixed pools of
+2026-11-03 left the gate's three workers running alone for days after the house was done.
+A failed rollout is retried once; `logs/testbed.out` has a line per
+rollout started and done, `logs/testbed/failed.txt` what failed twice.
 
     TAUS="0.1" GOALS2="cooperation" HOUSE="" sh run_testbed.sh                  # one gate rollout
     TAUS="0.1" GOALS2="cooperation" GATE="" HOUSE="near_miss" sh run_testbed.sh  # one tier one
-    nohup sh run_testbed.sh > logs/testbed.out 2>&1 &                            # all 147
+    nohup sh run_testbed.sh > logs/testbed.out 2>&1 &                            # all 196
 
-`GATE="gate_few"` is the gate with four hand-off cells (6.2 GiB); `HAZARD=0.02` and the rest of
-`run_tau_grid.sh`'s options carry through. Figures per scene in `output/testbed/<scene>/`. The
-tier scenes are asymmetric, so hinder as agent_2 is another run: `GOALS1="cooperation conflict
-competition coercion exchange none hinder" GOALS2="hinder"`.
+`GATE="gate_few" MEM_GATE=8` is the gate with four hand-off cells (6.2 GiB, about a tenth of
+the states); `HAZARD=0.02`, `LAZY=0.02` and the rest of `run_tau_grid.sh`'s options carry
+through. Figures per scene in `output/testbed/<scene>/`. The tier scenes are asymmetric, so
+hinder as agent_2 is another run: `GOALS1="cooperation conflict competition coercion exchange
+none hinder" GOALS2="hinder"`.
+
+## Where a transition's time goes, and lazy hypotheses (option, 2026-11-04)
+
+Profiled on the two-room scene (60,368 joint states, hinder / cooperation, both at level 2,
+tau 0.1, 2 threads): 40-45 s a transition in the steady state, of which the 168 level-1
+hypothesis models (12 physical goals x 7 social goals per robot) take 90 % and the four
+level-2 models (roots and twins) 5 %. Each hypothesis model is re-solved every transition
+because the robot's beliefs move its inputs -- the partner it predicts (Eq. 4) and the social
+term, whose rate changes with the belief and whose value changes by $1/(1-\gamma)$ = 200
+times that: the warm start is off by 10-70 in value for the race and coercion hypotheses --
+and a solve then takes some 20 policy-iteration steps and 130 Krylov iterations per model
+(summed over its four stages), the Krylov iterations 90 % of it. Tried on that solve, and
+found not to help: a looser certificate (`value_tol` 1e-2 instead of 1e-4: 7 % faster),
+another forcing (`pi_forcing` 0.01-0.3: no faster), single-precision Krylov vectors (no
+change), a least-squares constant shift of the warm start per work item (no change), and
+Gauss-Seidel or Jacobi sweeps in place of the Krylov evaluation (slower). What is left on the
+CPU is to solve fewer models, or to spread the rollouts better over the machine (the
+scheduler above).
+
+`LAZY=m` (`Config.lazy_mass`, `--lazy m`, folders `..._lazy<m>`; off by default): of each
+level-2 robot's hypothesis models about its partner, in order of the mass their hypotheses
+carry in its two posteriors, $b_g(g)\,b_\xi(\xi)$, the lightest ones whose masses add up to at
+most $m$ keep the values and policies of their last solve instead of being re-solved; every
+model is solved at the first transition and at least every `lazy_period` (5) transitions. The
+skipped models move the robot's prediction of its partner by at most $m$ of its mass; the
+likelihood of their hypotheses (Eqs. 5-6) is read off policies a few transitions stale. What
+was skipped is in the record (`trace[t]["lazy"]`: per robot, models skipped, their mass, models
+solved). Measured on the two-room scene (hinder / cooperation, both at
+level 2, tau 0.1, 16 transitions, 2 threads): 350 s against 691 s exact, the same 16 joint
+actions, but not the same beliefs -- from transition 9 agent_1 reads its partner as "none" 0.91
+where the exact run reads "conflict" 1.00. Not safe as it is; off by default.
+
+## A softer likelihood: `INFTAU`, `LAPSE` (options, 2026-11-04)
+
+On the testbed's hinder / cooperation at `hall_crossing` (tau 0.1, hazard 0.02) the hinderer's
+belief about red's destination swung on single moves (G3 0.96 -> 0.003 on one step left at
+step 38, G2 on top at 39; G5 0.97 at 51 with red in front of G1): at tau 0.1 one move moves two
+hypotheses apart by $e^{\Delta Q/\tau}$, $\tau = 0.05$ reward units, and the level-1 models a
+level-2 robot reads its partner by misread a partner that plans at level 2 (README, "A softer
+likelihood"). Two options, off by default (Eqs. 5-6 as printed), in `run_tau_grid.sh` and
+`run_testbed.sh`:
+
+    INFTAU=0.5 HAZARD=0.02 sh run_testbed.sh     # the likelihood at tau_inf = 0.5 c(move); folders ..._inftau0.5_hazard0.02
+    LAPSE=0.05 HAZARD=0.02 sh run_testbed.sh     # a lapse of 0.05 in it; folders ..._lapse0.05_hazard0.02
+
+`INFTAU` (`--inference-temperature`, `Config.inference_temperature`): the hypothesis models'
+softmax at $\tau_{inf}$ for the belief update only (the robots plan and act at Eq. 7's tau);
+0.5 is Baker, Saxe & Tenenbaum's fit to people, $\eta = \tau/\tau_{inf} = 0.2$ at tau 0.1.
+`LAPSE` (`--lapse`, `Config.belief_lapse`): $(1-\varepsilon)\psi + \varepsilon/|A|$. Not run on
+the testbed yet; tested on the tiny scene against the reference update (`test_beliefs.py`).
+
+## The object's posterior and the destination's apart (default since 2026-11-04)
+
+Each robot's belief about its partner's physical goal is now two posteriors: one about the
+object it wants, learnt while its hands are empty (the destination's frozen), and one about
+its destination, learnt while it holds an object (the object's frozen); the robot plans with
+their product. Until now one joint posterior believed the destination under each object
+apart, so that a destination only the less likely object explained could not win (README,
+"The object's posterior and the destination's apart"). Folders `..._eq56_objgoal`; `JOINT=1`
+gives the update of before and its folders.
 
 ## The partner's goal may change: a hazard (options, 2026-11-02)
 

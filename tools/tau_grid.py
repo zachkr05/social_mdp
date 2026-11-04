@@ -62,6 +62,10 @@ def read(folders) -> list:
         # the hazards of the partner's goal (since 2026-11-02; a folder of before: none)
         hazards = tuple(float((summary.get("options") or {}).get(k, 0.0))
                         for k in ("goal_hazard", "social_hazard", "hand_hazard"))
+        # a lapse in the likelihood and its own temperature (since 2026-11-04; a folder of
+        # before: neither)
+        lapse = float((summary.get("options") or {}).get("belief_lapse", 0.0))
+        inftau = (summary.get("options") or {}).get("inference_temperature")
         for r in summary["rows"]:
             if r.get("objects", "inferred") != "inferred":
                 continue
@@ -70,19 +74,31 @@ def read(folders) -> list:
                              tau_2=t2, done_1=r["done_at"][0], done_2=r["done_at"][1],
                              goal_1=bool(own[0]), goal_2=bool(own[1]), steps=r["steps"],
                              stopped_by=r["stopped_by"], scene=scene, conflict=reading,
-                             hazards=hazards, folder=str(folder)))
+                             hazards=hazards, lapse=lapse, inftau=inftau,
+                             folder=str(folder)))
     return rows
 
 
 def scene_of(rows) -> str:
     """The scene, and the reading of conflict where a folder was made under the task
     conflict of 2026-11-01 (Config.conflict; Table I's, the reading of before, is not
-    named), and the hazards of the partner's goal where there are any (2026-11-02)."""
+    named), the lapse in the likelihood (2026-11-04) and the hazards of the partner's goal
+    where there are any (2026-11-02)."""
     readings = {r.get("conflict", "table") for r in rows}
     name = rows[0]["scene"]
     if readings != {"table"}:
         name += (", task conflict" if readings == {"task"}
                  else ", task and Table I conflict mixed")
+    inftaus = {r.get("inftau") for r in rows}
+    if len(inftaus) > 1:
+        name += ", inference taus mixed"
+    elif inftaus != {None}:
+        name += f", inference tau {float(inftaus.pop()):g}"
+    lapses = {float(r.get("lapse") or 0.0) for r in rows}
+    if len(lapses) > 1:
+        name += ", lapses mixed"
+    elif lapses != {0.0}:
+        name += f", lapse {lapses.pop():g}"
     hazards = {tuple(r.get("hazards") or (0.0, 0.0, 0.0)) for r in rows}
     if len(hazards) > 1:
         name += ", hazards mixed"

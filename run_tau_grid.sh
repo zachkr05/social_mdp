@@ -57,6 +57,20 @@
 # it is mixed with the uniform, (1 - H) b + H u, Baker, Saxe & Tenenbaum 2009's model M2; HAND_HAZARD
 # once at its pick-ups and places, before their evidence; folders ..._hazard<H>,
 # ..._socialhazard<H>, ..._handhazard<H>),
+# JOINT (1: Config.belief_factored=False, one joint posterior over the partner's (object,
+# destination), the update until 2026-11-04; by default the posterior about its object and
+# the one about its destination apart, folders ..._objgoal),
+# INFTAU (since 2026-11-04; Config.inference_temperature, default none = Eq. 7's tau: the
+# likelihood of the belief update at a tau of its own, INFTAU x c(move) -- 0.5 is Baker, Saxe
+# & Tenenbaum 2009's fit to people; the robots still plan at tau; folders ..._inftau<T>),
+# LAPSE (since 2026-11-04; Config.belief_lapse, default 0: a lapse in the likelihood -- each
+# hypothesis model's policy read as (1 - E) psi + E / |A|, so one odd move costs a hypothesis
+# at most a factor of about |A| / E; folders ..._lapse<E>),
+# LAZY (since 2026-11-04; Config.lazy_mass: lazy hypotheses -- the lightest hypothesis models,
+# up to that mass, left as last solved each transition; folders ..._lazy<MASS>), SCHEDULER (1:
+# one queue over every scene, tools/schedule.py, with MEMS="scene=GiB ..." and THREADS_OF=
+# "scene=N ..." per scene, MAX_THREADS (8) a rollout at most, NUMA=1 to bind each rollout to a
+# NUMA node; run_testbed.sh's way since 2026-11-04),
 # SCENE (default two), STEPS (default 60), NOVIDEO (default 1:
 # records only -- 1225 x 3 videos is a lot; NOVIDEO=0 draws them), LOGS (default
 # logs/tau_grid), OUT (default output/tau_grid; with more than one scene, OUT/<scene> for each),
@@ -80,6 +94,10 @@ FLAGS="--levels 2 2 --objects inferred --steal --foreign-carry-cost 1 --inertia 
 [ -n "$HAZARD" ] && FLAGS="$FLAGS --goal-hazard $HAZARD"          # the partner's goal may change (folders _hazard<H>)
 [ -n "$SOCIAL_HAZARD" ] && FLAGS="$FLAGS --social-hazard $SOCIAL_HAZARD"
 [ -n "$HAND_HAZARD" ] && FLAGS="$FLAGS --hand-hazard $HAND_HAZARD"
+[ -n "$INFTAU" ] && FLAGS="$FLAGS --inference-temperature $INFTAU"  # the likelihood's own tau (2026-11-04; folders _inftau<T>)
+[ -n "$LAPSE" ] && FLAGS="$FLAGS --lapse $LAPSE"  # a lapse in the likelihood (2026-11-04; folders _lapse<E>)
+[ -n "$LAZY" ] && FLAGS="$FLAGS --lazy $LAZY"     # lazy hypotheses (2026-11-04; folders _lazy<MASS>)
+[ "${JOINT:-0}" = 1 ] && FLAGS="$FLAGS --joint-posterior"   # one joint (object, destination) posterior, the rule until 2026-11-04
 [ -n "$MEM" ] && FLAGS="$FLAGS --max-memory-gib $MEM"   # (not in the folder name: same model)
 EXTRA="--steps ${STEPS:-60}"
 [ "${NOVIDEO:-1}" = 1 ] && EXTRA="$EXTRA --no-video"
@@ -120,7 +138,9 @@ pairs() {
 np=$(pairs | wc -l); n1=$(echo $GOALS1 | wc -w); n2=$(echo $GOALS2 | wc -w); ns=$(echo $SCENES | wc -w)
 if [ "${SAME:-0}" = 1 ]; then what="both robots at each tau of $TAUS1"
 else what="agent_1 at $TAUS1, agent_2 at $TAUS2"; fi
-echo "tau grid: $SCENES; $what; $ns scene(s) x $np pairs of taus x $(( n1 * n2 )) pairings = $(( ns * np * n1 * n2 )) rollouts; $WORKERS workers x $THREADS threads; logs in $LOGS"
+if [ "${SCHEDULER:-0}" = 1 ]; then how="one queue, as many at once as memory and CPUs allow (tools/schedule.py)"
+else how="$WORKERS workers x $THREADS threads"; fi
+echo "tau grid: $SCENES; $what; $ns scene(s) x $np pairs of taus x $(( n1 * n2 )) pairings = $(( ns * np * n1 * n2 )) rollouts; $how; logs in $LOGS"
 
 # compile the kernels once (numba caches them) before the workers start together
 $PY examples/run_object_inference.py $FLAGS --temperature 0.2 0.3 --scene tiny --steps 2 \
@@ -149,15 +169,28 @@ run_jobs() {      # the rollouts of the jobs file $1, WORKERS at a time; the fai
   ' < "$1"
 }
 : > "$LOGS/failed.txt"
-run_jobs "$JOBS"
-# once more, in parallel, the rollouts that failed (a squeeze of threads or memory as many
-# start at once); what fails again is left to the table pass below, which rolls out what is
-# missing one at a time
-if [ -s "$LOGS/failed.txt" ]; then
-  mv "$LOGS/failed.txt" "$LOGS/retry.txt"
-  : > "$LOGS/failed.txt"
-  echo "retrying $(wc -l < "$LOGS/retry.txt") failed rollout(s)"
-  run_jobs "$LOGS/retry.txt"
+if [ "${SCHEDULER:-0}" = 1 ]; then
+  # one queue for every scene (2026-11-04, tools/schedule.py): a rollout starts whenever its
+  # memory (MEM, or MEMS="scene=GiB ..." per scene) and threads (THREADS, or THREADS_OF=
+  # "scene=N ...") fit, the big ones first, the free CPUs shared out (up to MAX_THREADS a
+  # rollout); what fails is retried once by the scheduler itself
+  MEMARGS="--mem ${MEM:-2.5}"
+  for kv in $MEMS; do MEMARGS="$MEMARGS --mem $kv"; done
+  THRARGS="--threads $THREADS"
+  for kv in $THREADS_OF; do THRARGS="$THRARGS --threads $kv"; done
+  $PY tools/schedule.py "$JOBS" --logs "$LOGS" --flags "$FLAGS" --extra "$EXTRA" $MEMARGS $THRARGS \
+    --max-threads "${MAX_THREADS:-8}" --python "$PY" || true
+else
+  run_jobs "$JOBS"
+  # once more, in parallel, the rollouts that failed (a squeeze of threads or memory as many
+  # start at once); what fails again is left to the table pass below, which rolls out what is
+  # missing one at a time
+  if [ -s "$LOGS/failed.txt" ]; then
+    mv "$LOGS/failed.txt" "$LOGS/retry.txt"
+    : > "$LOGS/failed.txt"
+    echo "retrying $(wc -l < "$LOGS/retry.txt") failed rollout(s)"
+    run_jobs "$LOGS/retry.txt"
+  fi
 fi
 
 # per scene and pair of taus, one pass over its saved rollouts (nothing is rolled out again

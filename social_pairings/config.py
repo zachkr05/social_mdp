@@ -29,12 +29,14 @@ HYPOTHESES = PAPER_GOALS + ("none", "hinder")
 EVERY_PARTNER = SOCIAL_GOALS
 # Since 2026-10-30 the belief update is Eqs. 5-6 as the authors' solver keeps them (two
 # posteriors, the idle filter, Eq. 5's transition term; models.py): the devices of before --
-# the lapse, the carry and park tables, the "outcome" observation, the separate inference
-# temperature, the joint posterior, the conditioning of the partner's estimate on the
-# robot's action -- are gone, and asking for them raises (BELIEF_DEVICES).  Records of
-# before carry their fields; written_with reads them.
-BELIEF_DEVICES = dict(belief_lapse=0.0, partner_delivers=False, partner_parks=False,
-                      partner_observed="action", inference_temperature=None,
+# the carry and park tables, the "outcome" observation, the joint posterior, the
+# conditioning of the partner's estimate on the robot's action -- are gone, and asking for
+# them raises (BELIEF_DEVICES).  Records of before carry their fields; written_with reads
+# them.  (The lapse and the separate inference temperature of then, gone with them, are
+# options again since 2026-11-04, off by default: Config.belief_lapse,
+# Config.inference_temperature.)
+BELIEF_DEVICES = dict(partner_delivers=False, partner_parks=False,
+                      partner_observed="action",
                       social_belief="marginals", child_conditioning=False)
 # The defaults until 2026-10-08, under which the README's results marked "told" were made:
 # each level-2 robot told its partner's social goal, an exchanger at level 1 as Table I prints
@@ -52,7 +54,7 @@ AUTOMATIC_HANDS = dict(automatic_hands=True, pick_steps=1, pick_cost_rate=1.0, u
 TOLD = dict(partner_social_goal="known", social_hypotheses=PAPER_GOALS, exchange_level1="none",
             competition="race_then_hinder", partner_object="known",
             cooperate_with=EVERY_PARTNER, level_free_level=1, hinder_own_goal=True,
-            belief_stages=False, **AUTOMATIC_HANDS)
+            belief_stages=False, belief_factored=False, **AUTOMATIC_HANDS)
 # (the devices of before, under which every record before 2026-10-30 was made, are not
 # restored by TOLD: they are gone -- BELIEF_DEVICES)
 # Fields added to Config after records were first written, each with the value every record
@@ -81,6 +83,9 @@ ADDED_FIELDS = dict(
     goal_hazard=0.0,               # 2026-11-02 (the partner's goal never changed)
     social_hazard=0.0,             # 2026-11-02
     hand_hazard=0.0,               # 2026-11-02
+    belief_factored=False,         # 2026-11-04 (one joint physical posterior, b(d | o) apart)
+    lazy_mass=0.0,                 # 2026-11-04 (every hypothesis model solved every transition)
+    lazy_period=5,                 # 2026-11-04
 )
 
 
@@ -156,10 +161,28 @@ class Config:
     # are stored that way (``temperature`` = the value, this field None), so a record made
     # with one tau for both is the same record whichever way it was asked for.
     robot_temperatures: Optional[Tuple[float, float]] = None
-    # (Until 2026-10-30 the belief update had a temperature of its own and could read a
-    # blocked move as a wait: both are gone -- the likelihood of Eqs. 5-6 is Eq. 7's softmax
-    # of the hypothesis model's Q at Eq. 7's tau, of the action the partner chose, as
-    # Algorithm 1 takes the joint action.  Kept for the records of before: BELIEF_DEVICES.)
+    # A temperature of the belief update's own (2026-11-04; the user: "Ok lets implement this:
+    # Tempered likelihood P^eta, eta = tau / tau_inf = 0.2 (tau_inf = 0.5 c(move), the value
+    # Baker et al. fit to people)"): the likelihood of Eqs. 5-6 is the hypothesis model's
+    # softmax at tau_inf = inference_temperature (in the unit of ``temperature``) in place of
+    # Eq. 7's tau,
+    #     psi_inf(a | s) = exp(Q(s, a) / tau_inf) / sum_a' exp(Q(s, a') / tau_inf)
+    #                    = psi(a | s)^eta / sum_a' psi(a' | s)^eta,     eta = tau / tau_inf,
+    # the partner read as less exact than the models' tau makes it (Baker, Saxe & Tenenbaum
+    # 2009 fit beta = 2 per move's cost, i.e. tau_inf = 0.5 c(move), to people's online goal
+    # inferences).  A gap dQ within a model then counts e^(-eta dQ / tau): at tau 0.1 and
+    # tau_inf 0.5 a one-move detour's 1e-6 becomes about 1/16, a 0.2-unit gap x2.2 in place
+    # of x55 -- so that one surprising move, or a few that the level-1 hypothesis models
+    # misread (they hold the partner at level 1, and it plans at level 2), do not crush a
+    # hypothesis.  The right evidence counts less too.  As a softmax, still a distribution
+    # over the actions: a hypothesis whose policy spreads over many actions explains any one
+    # of them less well than one that predicted it (unlike the plain power P^eta).  Only the
+    # belief update: the robots plan, act and predict each other at Eq. 7's tau.  None (the
+    # default): Eq. 7's tau, Eqs. 5-6 as printed.  A device of the belief layer until
+    # 2026-10-30 (0.5 by default there), gone with it, back as an option.  With a tau per
+    # robot (robot_temperatures) both robots read each other at it.  Folders ..._inftau<T>.
+    # (The belief update of before 2026-10-30 could also read a blocked move as a wait:
+    # gone -- partner_observed, BELIEF_DEVICES.)
     inference_temperature: Optional[float] = None
     partner_observed: str = "action"
     # How the robots themselves act.  "argmax": Algorithm 1's greedy choice.  "sample": a draw
@@ -422,6 +445,23 @@ class Config:
     # level-1 models hold about the robot, by the robot's hands.  False: Eq. 6 with the
     # likelihood of each (object, destination) hypothesis as it is, as until 2026-10-17.
     belief_stages: bool = True
+    # The two physical posteriors apart (since 2026-11-04; the user: "WE SHOULD HAVE TWO
+    # POSTERIORS one for goal and one for objects ... When red has an object, green should
+    # freeze its posterior on objects and when red doesn't we should not freeze the object
+    # posterior but we should freeze the goal posterior").  The physical belief about the
+    # partner is a product b(o, d) = b_O(o) b_D(d) of a belief about its object and one about
+    # its destination, each updated in its own stage: while the partner's hands are empty,
+    # b_O by the likelihood of the action under each object, the destinations averaged out
+    # under b_D, b_D frozen; while it holds (or lifts) an object, b_D by the likelihood under
+    # each destination, the objects averaged out under b_O, b_O frozen.  What the hands'
+    # outcomes rule in or out (Eq. 5's transition term) acts on both.  The robot plans with
+    # the product (Eq. 4).  False: one joint posterior over (object, destination), staged as
+    # until now -- the destination believed under each object apart, b(d | o), and shown
+    # summed over the objects (models.SocialMDP.staged_log_likelihood,
+    # _renormalize_stage); a destination that only the less likely object explains then
+    # cannot gain (the hinderer, holding "red wants O1" at 0.8, read red carrying O2 toward
+    # G1 as heading for G2, the destination least at odds with wanting O1).
+    belief_factored: bool = True
     # The partner's goal may change (since 2026-11-02; the user: "lets go ahead and implement
     # this").  Baker, Saxe & Tenenbaum (2009), "Action understanding as inverse planning",
     # Cognition, model M2 ("changing goals"): after every update a posterior about the partner
@@ -454,10 +494,40 @@ class Config:
     # or the place then counts in full.  1: the evidence before it forgotten altogether; 0:
     # nothing at the hands (goal_hazard still applies).
     hand_hazard: float = 0.0
-    # (The devices of before, gone since 2026-10-30 and kept only so that the records of
-    # before can be read -- BELIEF_DEVICES, written_with.  Asking for any of them raises.)
-    # a lapse (1 - e) psi_k + e uniform in the likelihood
+    # A lapse in the likelihood (2026-11-04; the user: "lets go ahead an implement this: A
+    # lapse: psi~ = (1 - e) psi + e / |A| ... It caps what one odd move can cost"): the
+    # partner is read as acting by a hypothesis model's policy with probability 1 - e and as
+    # picking one of the actions open to it at random with probability e,
+    #     psi~_k(a | s) = (1 - e) psi_k(a | s) + e / |A_k(s)|,
+    # A_k(s) the actions model k allows at s, in both posteriors (Eqs. 5 and 6; also under
+    # physical_likelihood="level0").  Every hypothesis then explains every allowed move at
+    # least e / |A|, so one move costs a hypothesis at most a factor of about |A| / e against
+    # the best-placed one (100 at e = 0.05 and five moves), where at tau 0.1 a one-move detour
+    # costs it some 1e-6 -- the hall_crossing testbed (hinder / cooperation, tau 0.1, hazard
+    # 0.02), step 38: red stepping left at the door of G3's room sent "G3" from 0.96 to the
+    # hazard floor, and at 39 a move that fitted G0, G2 and G3 alike put G2 on top.  The
+    # planners' predictions of the partner are untouched (Eqs. 3-4 take the models' policies
+    # as they are); so is the idle mode's.  Gone on 2026-10-30 with the other devices of the
+    # belief layer of then (0.05 by default there); back as an option, 0 by default (Eqs. 5-6
+    # as printed).  Folders ..._lapse<e>.
     belief_lapse: float = 0.0
+    # Lazy hypotheses (2026-11-04; the user: "parallelize the S-MDP so it runs substantially
+    # faster").  Of the level-1 models a level-2 robot holds as hypotheses about its partner
+    # (12 physical goals x 7 social goals = 84 per robot at the 49's settings; nine tenths of
+    # a transition's time), the ones whose hypotheses carry little mass in the robot's two
+    # posteriors are not re-solved every transition: in order of mass b_g(g) b_xi(xi), the
+    # lightest models whose masses add up to at most lazy_mass keep the values and policies
+    # of their last solve, and every model is solved at least every lazy_period transitions
+    # (models.SocialMDP.lazy_rows).  0: every model every transition, the rule of before.
+    # The skipped models hardly move the robot's prediction of its partner (their mass at
+    # most lazy_mass of it); the likelihood of their hypotheses is read off policies a few
+    # transitions stale.  What is skipped per transition is in the record (trace "lazy").
+    # Folders ..._lazy<mass>.
+    lazy_mass: float = 0.0
+    lazy_period: int = 5
+    # (The devices of before, gone since 2026-10-30 and kept only so that the records of
+    # before can be read -- BELIEF_DEVICES, written_with.  Asking for any of them raises.  The
+    # lapse of then is back as an option: belief_lapse, above.)
     # a partner holding the robot's object predicted by a carry table (not by its models)
     partner_delivers: bool = False
     # a partner without a social goal predicted to park once its goal is done
@@ -602,8 +672,8 @@ class Config:
         # the names, each once, in the order of SOCIAL_GOALS ("all": every one)
         partners = sorted(cooperation_partners(self.cooperate_with))
         object.__setattr__(self, "cooperate_with", tuple(SOCIAL_GOALS[g] for g in partners))
-        if not 0.0 <= self.belief_lapse < 1.0:
-            raise ValueError("belief_lapse must lie in [0, 1)")
+        if isinstance(self.belief_lapse, (bool, np.bool_)) or not 0.0 <= self.belief_lapse < 1.0:
+            raise ValueError("belief_lapse must be a number in [0, 1)")
         for name in ("park_eps", "idle_eps"):
             if not 0.0 <= getattr(self, name) < 1.0:
                 raise ValueError(f"{name} must lie in [0, 1)")
@@ -620,6 +690,14 @@ class Config:
                                  f"the partner's goal is redrawn)")
         if not 0.0 <= self.pi_forcing < 1.0:
             raise ValueError("pi_forcing must lie in [0, 1)")
+        if (isinstance(self.lazy_mass, (bool, np.bool_))
+                or not isinstance(self.lazy_mass, (int, float, np.integer, np.floating))
+                or not 0.0 <= float(self.lazy_mass) < 1.0):
+            raise ValueError("lazy_mass must be a number in [0, 1): the hypothesis mass whose "
+                             "models may be left stale")
+        if isinstance(self.lazy_period, bool) or not isinstance(self.lazy_period, int) \
+                or self.lazy_period < 1:
+            raise ValueError("lazy_period must be an int >= 1")
         for name, low in (("done_tail", 0), ("num_threads", 0), ("debug_every", 0),
                           ("livelock_window", 0), ("deadlock_window", 1), ("max_pi_iters", 1),
                           ("max_krylov_iters", 1), ("debug_topk", 1)):
@@ -668,9 +746,18 @@ class Config:
 
     @property
     def tau_inference(self) -> float:
-        """Temperature of the likelihood of Eqs. 5-6 in reward units."""
+        """Temperature of the likelihood of Eqs. 5-6 in reward units, where both robots have
+        the same (:meth:`inference_tau_of`)."""
         if self.inference_temperature is None:
             return self.tau
+        return self.inference_tau_of(0)
+
+    def inference_tau_of(self, i: int) -> float:
+        """The tau in reward units of robot i's update about its partner (the likelihood of
+        Eqs. 5-6): ``inference_temperature`` where set (since 2026-11-04), else robot i's
+        Eq. 7 tau (:meth:`tau_of`)."""
+        if self.inference_temperature is None:
+            return self.tau_of(i)
         scale = float(self.costs[0]) if self.temperature_unit == "move_cost" else 1.0
         return float(self.inference_temperature) * scale
 

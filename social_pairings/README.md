@@ -2116,6 +2116,105 @@ loop: their beliefs are updated after every transition, and a set-down in vain r
 cell out (in "helping" agent_2 tries three wrong candidates, each once). A fix would let a
 model learn from its own set-down in vain within the plan.
 
+## A softer likelihood: its own temperature, and a lapse (options, since 2026-11-04)
+
+The user, on hinder / cooperation on `hall_crossing` (the testbed, tau 0.1, hazard 0.02):
+"So why on step 39 to 40 does ti switch to G2 when its on the other side of the world and its
+closest to G3?", then "how do we make it not collapse so low?"; on the two options proposed,
+"Ok lets go ahead an implement this: A lapse ..." and "Ok lets implement this: Tempered
+likelihood".
+
+What the record shows (the likelihoods backed out of the beliefs, posterior over prior): the
+belief about the partner multiplies, $\log b_T(g) = \log b_0(g) + \sum_t \log P(a_t \mid
+s_t, g)$, and one step moves two hypotheses apart by about $e^{\Delta Q/\tau}$ -- at tau
+0.1, $\tau = 0.05$ reward units, a gap of 0.2 between how two models rate a move is a factor
+of 55, one move's cost (0.5) one of $2 \times 10^4$. At step 38 red, at the door of G3's room,
+stepped left (toward its own G1): a detour under G3, which went from 0.96 to the hazard's
+floor ($4 \times 10^{-7}$ of the others' likelihood); at 39 a step up fitted G0, G2 and G3
+alike (1.00, 0.97, 0.95), and the posterior kept the order of its prior, G2 0.51. At step 51
+red stood in front of G1 with G5 at 0.97: the set-down for green at G3 (43) and a step left
+at (10,5) (48) had counted against G1 (x0.019, x0.018), and the moves since fitted G1 and
+G5 alike. Where the level-1 hypothesis models misread a partner that plans at level 2
+(carrying the object to G3 for green, keeping it away from green's takes), the true goal
+pays, and tau multiplies it; the hazard bounds how far a hypothesis falls, not what one step
+does; a window of the last steps would have kept every one of those steps.
+
+Two options soften what one step does, off by default (Eqs. 5-6 as printed):
+
+- **`inference_temperature`** ($T$, in the unit of `temperature`; `--inference-temperature`,
+  `INFTAU=`): the likelihood is the hypothesis model's softmax at $\tau_{inf} = T\,c(\text{move})$
+  in place of Eq. 7's tau,
+  $$\psi_{inf}(a \mid s) = \frac{e^{Q(s,a)/\tau_{inf}}}{\sum_{a'} e^{Q(s,a')/\tau_{inf}}}
+    = \frac{\psi(a \mid s)^\eta}{\sum_{a'} \psi(a' \mid s)^\eta},\qquad \eta = \tau/\tau_{inf},$$
+  so a gap $\Delta Q$ counts $e^{-\eta \Delta Q / \tau}$: at tau 0.1 and $T = 0.5$ (Baker, Saxe
+  & Tenenbaum 2009's fit to people, $\beta = 2$ per move's cost) the detour's $10^{-6}$ is
+  about 1/16 and a factor 55 is 2.2. Still a distribution over the actions -- a hypothesis
+  that spreads over many actions explains any one of them less well than one that predicted
+  it, unlike the plain power $P^\eta$ of generalized Bayes. The right evidence counts less
+  too. Only the belief update: the robots plan, act and predict each other at Eq. 7's tau
+  (`SocialMDP.inference_taus`; `test_beliefs.InferenceTemperature`). Folders `..._inftau<T>`.
+- **`belief_lapse`** ($\varepsilon$; `--lapse`, `LAPSE=`): each model's policy read as
+  $\tilde\psi = (1 - \varepsilon)\psi + \varepsilon/|A|$, $A$ the actions the model allows --
+  the partner picking one at random with probability $\varepsilon$ -- in both posteriors
+  (`SocialMDP.lapsed`). One step then moves no hypothesis by more than about $|A|/\varepsilon$
+  (100 at 0.05 and five moves); it caps the single crushing step (38) but not moderate ones
+  (43, 48), and it caps a decisive step as much. Folders `..._lapse<E>`.
+
+Both were devices of the belief layer until 2026-10-30 (an inference temperature of 0.5 and a
+lapse of 0.05 by default there) and went with it; they are back as options. With both, the
+lapse acts on the policy at $\tau_{inf}$.
+
+## The object's posterior and the destination's apart (since 2026-11-04)
+
+The user, on a video of hinder / cooperation on `head_on_blocked_goal` (tau 0.1, hazard 0.02),
+where the hinderer came to believe that red was taking its object to G2 while red walked
+toward G1: "Why near the end does green starting thinking that he wants G2 and not g1 and
+g0? When red is near g0 and g1 we should have switched", then "WE SHOULD HAVE TWO POSTERIORS
+one for goal and one for objects", and "When red has an object, green should freeze its
+posterior on objects and when red doesn't we should not freeze the object posterior but we
+should freeze the goal posterior".
+
+What went wrong: until now the physical belief was one posterior over (object, destination)
+pairs, staged by the partner's hands as below -- holding an object, the destination believed
+under each object apart, $b(d \mid o)$, the object's mass kept -- and the bars of the
+destination were that summed over the objects. Red had picked up the hinderer's object O1 at
+step 3; the hinderer held "red wants O1" at 0.80, frozen from then on (red's
+hands were never empty again: at step 33 it swapped O1 for O2 on O2's place, read as a
+destination's evidence). Walking left toward G1 with O2 in hand fits no destination under
+"O1"; $b(d \mid \text{O1})$ went to the destination least at odds with it, G2, the far one
+whose policy is the flattest; under "O2" the walk fits G1 and G0, but $b(d \mid \text{O2})$
+weighs 0.2 whatever it says. So the bars read G2 0.6-0.9 to the end.
+
+Now (`Config.belief_factored`, the default) the physical belief about the partner is the
+product of two posteriors, $b(o, d) = b_O(o)\,b_D(d)$:
+
+- **Hands empty** (holding nothing, not lifting): its action updates the object's posterior,
+  $$b_O'(o) \propto b_O(o) \sum_d b_D(d)\,\psi_{(o,d)}(a \mid s),$$
+  and the destination's is frozen, $b_D' = b_D$.
+- **Holding an object** (or lifting one): its action updates the destination's posterior,
+  $$b_D'(d) \propto b_D(d) \sum_o b_O(o)\,\psi_{(o,d)}(a \mid s),$$
+  and the object's is frozen, $b_O' = b_O$. A destination is weighed by how well the objects
+  together explain the step: in the case above G1, which only "O2" explains, wins against
+  G2, which no object explains (`tests/test_beliefs.py`,
+  `test_the_goal_follows_the_object_that_explains_the_move`).
+- $\psi_{(o,d)}$ is Eq. 6's likelihood as before (the level-1 hypothesis policies averaged
+  over the social posterior; `physical_likelihood`), mixed with the idle mode as before.
+- What the hands' outcomes tell (Eq. 5's transition term: a set-down for the partner that
+  counted or failed, a hand-over in vain) acts on the joint and then on both posteriors,
+  each the marginal of it (the frozen one of the prior times that term alone).
+- The hazards act on the posterior that learns next: `goal_hazard` on the object's while
+  the partner's hands are empty, on the destination's while it holds; `hand_hazard` on the
+  object's before a pick-up or a take, on the destination's before a place, give or swap.
+- The robot plans with the product (Eq. 4), and the level-1 models' beliefs about the robot
+  that models them are built the same way.
+- Without the stages (`belief_stages=False`) both posteriors learn from every action.
+- `belief_factored=False` (`--joint-posterior`, `JOINT=1`, and in `TOLD`): the one joint
+  posterior of before. Folders of the new default end in `..._eq56_objgoal`.
+
+What the object's posterior does not yet see: a swap (holding O1, picking up O2 where it
+lies) is read as a destination's evidence, the partner's hands being full; the object's
+posterior stays where the first pick-up left it.
+
 ## Two posteriors, by the partner's hands (since 2026-10-17)
 
 The user, on 2026-10-17: "as we move the prior for the goal is being accrued even though we
@@ -3949,7 +4048,9 @@ every mix of levels ("Results").
 | `idle_hypothesis` | `True` | an extra "the partner stays put" mode in the belief of every robot that models its partner, a two-mode filter on top of Eqs. 5-6 (`idle_hazard`, `idle_eps`): on since 2026-10-08 noon (off until then); it lets two level-2 rivals pass each other at $w = 30$ (13 / 15, a stand-off without it). The one device kept beside Eqs. 5-6 on 2026-10-30. The cost: a partner that waits on purpose is read as idle |
 | `physical_likelihood` | `"level1"` | the likelihood of Eq. 6, by which a robot updates its belief about its partner's physical goal: `"level1"`, the partner's level-1 hypothesis policies averaged over the social posterior, Eq. 6 as the paper prints it; `"level0"`, the partner's level-0 policies, as the authors' code (its physical-goal estimator runs on them), under which a partner's act for the robot is read as the partner's own goal ("The belief update of 2026-10-30"; since 2026-10-30) |
 | `condition_on_placement` | `True` | Eq. 5's transition term: what the hands reveal of the partner's goal -- its finishing, its own set-down that did nothing, the robot's set-down for it that counted or failed, a hand-over it took or not -- rules out the hypotheses that predicted otherwise ("The belief update of 2026-10-30"). `False`: the actions alone |
-| `belief_lapse`, `partner_delivers`, `partner_parks`, `partner_observed`, `inference_temperature`, `social_belief`, `child_conditioning` | `0`, `False`, `False`, `"action"`, `None`, `"marginals"`, `False` | the devices of before 2026-10-30, gone: the lapse, the carry and park tables, the "outcome" observation, the belief temperature, the joint posterior, the conditioning of the partner's estimate on the robot's action inside $\tilde R_j$. Kept only so that the records of before can be read; `Config` raises on any other value (`BELIEF_DEVICES`) |
+| `inference_temperature` | `None` | the likelihood of Eqs. 5-6 at a tau of its own, $T \times c(\text{move})$: the hypothesis models' softmax at it, $\psi^\eta$ renormalised, $\eta = \tau/\tau_{inf}$; the robots still plan at Eq. 7's tau. `None`: Eq. 7's tau, Eqs. 5-6 as printed ("A softer likelihood"; an option since 2026-11-04; a device of before 2026-10-30, 0.5 there). Folders `..._inftau<T>` |
+| `belief_lapse` | `0` | a lapse in the likelihood: each model's policy read as $(1-\varepsilon)\psi + \varepsilon/|A|$, so that one step moves no hypothesis by more than about $|A|/\varepsilon$ ("A softer likelihood"; an option since 2026-11-04; a device of before 2026-10-30, 0.05 there). Folders `..._lapse<E>` |
+| `partner_delivers`, `partner_parks`, `partner_observed`, `social_belief`, `child_conditioning` | `False`, `False`, `"action"`, `"marginals"`, `False` | the devices of before 2026-10-30, gone: the carry and park tables, the "outcome" observation, the joint posterior, the conditioning of the partner's estimate on the robot's action inside $\tilde R_j$. Kept only so that the records of before can be read; `Config` raises on any other value (`BELIEF_DEVICES`). (The lapse and the belief temperature of then are options again: above) |
 | `exchange_share` | `0.25` | $n$ of the exchange row |
 | `physical_level` | `0` | the default level of a robot with a physical goal only (no social goal, or weight 0): 0, a plain MDP with nothing inferred (since 2026-10-08); 2, the default until then. A level asked for is used either way |
 | `level_free_level` | `2` | the default level of a robot whose term holds no $\tilde R_j$ -- a hinderer, a competitor of a race form -- and the most a hinderer may be asked for: 2 since 2026-10-11, like every robot with a social goal, a level asked for used ("Every robot with a social goal at level 2"); 1, the rule until then (`TOLD`): such a robot at level 1 by default, a hinderer held to level 1 whatever was asked |
@@ -3960,6 +4061,8 @@ every mix of levels ("Results").
 | `pick_cost_rate` | `3.0` | $c(\text{pick})$ in moves' worth, on the first transition of a lift; 1.0 until 2026-10-18 |
 | `use_cost_rate` | `2.0` | $c(\text{place})$, $c(\text{take})$, $c(\text{give})$, $c(\text{swap})$ in moves' worth; 1.0 until 2026-10-18 |
 | `belief_stages` | `True` | the physical posterior in two stages, by the partner's hands: while the partner holds nothing, its actions are evidence about which object it wants and none about its destination; while it holds an object, about its destination and none about its object ("Two posteriors, by the partner's hands"; since 2026-10-17; the social posterior is updated either way). `False`: every (object, destination) hypothesis by its own likelihood at every action, as until then (in `TOLD`) |
+| `belief_factored` | `True` | the physical belief about the partner the product of a posterior about its object, learnt while its hands are empty, and one about its destination, learnt while it holds an object, each frozen in the other's stage ("The object's posterior and the destination's apart"; since 2026-11-04). `False`: one joint posterior over (object, destination), the destination believed under each object apart, as until then (in `TOLD`) |
+| `lazy_mass`, `lazy_period` | `0`, `5` | lazy hypotheses (since 2026-11-04): the lightest hypothesis models of a level-2 robot, up to that mass of its posteriors, keep their last solve (every model solved at least every `lazy_period` transitions). 0: every model every transition. Not safe yet: it changed a social belief in the one test (`RUN_ALL_49.md`) |
 | `goal_hazard`, `social_hazard`, `hand_hazard` | `0`, `0`, `0` | the partner's goal may change (Baker, Saxe & Tenenbaum 2009, M2; since 2026-11-02): after every update the physical posterior (in the factor the partner's next action speaks to) and the social posterior are mixed with the uniform over the hypotheses they hold possible, $(1-h)\,b + h/|S|$, so that no hypothesis falls below $h/|S|$; `hand_hazard` mixes, once, the object factor before the partner's pick or take and the destination factor before its place, give or swap ("The partner's goal may change"). 0: the update of before |
 | `value_tol` | `1e-4` | every solve is certified to $\lvert V - V^*\rvert \le$ this |
 

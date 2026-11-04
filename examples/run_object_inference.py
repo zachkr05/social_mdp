@@ -52,7 +52,11 @@ belief update of Eqs. 5-6 as the authors' solver keeps it -- two posteriors, the
 filter, Eq. 5's transition term, nothing else (``social_pairings.models``), so that no
 folder of before, made with the devices of then, is kept by ``--resume``;
 ``--physical-likelihood level0``, the physical posterior on the partner's level-0 policies
-as in the authors' code rather than Eq. 6 as printed, writes to ``..._eq56l0``;
+as in the authors' code rather than Eq. 6 as printed, writes to ``..._eq56l0``; since
+2026-11-04 in ``..._eq56_objgoal``: the posterior about the partner's object and the one
+about its destination apart, each learnt in its stage and frozen in the other's
+(``Config.belief_factored``), ``--joint-posterior`` the update of before and the folder
+without the suffix;
 ``--conflict task`` (an option since 2026-11-01), a level-2 conflict robot paid ``-w r(g_j)``,
 Table I's entry at l = 1, against every partner, to ``..._taskconflict`` -- the default is
 the table as printed, ``-w R_j``, in the folder without the suffix.  Only a pairing with a
@@ -62,7 +66,10 @@ options asked for, and rolls out the pairings with conflict alone); ``--goal-haz
 ``--social-hazard H`` and ``--hand-hazard H`` (options since 2026-11-02, 0 by default: the
 partner's goal may change, Baker, Saxe & Tenenbaum 2009's model M2) to ``..._hazard<H>``,
 ``..._socialhazard<H>`` and ``..._handhazard<H>``, after ``_eq56`` and before
-``_taskconflict``:
+``_taskconflict``; ``--inference-temperature T`` and ``--lapse E`` (options since
+2026-11-04, off by default: the likelihood of the belief update at a tau of its own, T x a
+move's cost, and a lapse in it, each hypothesis model's policy read as
+``(1 - E) psi + E / |A|``) to ``..._inftau<T>`` and ``..._lapse<E>``, before the hazards:
 per rollout ``<pairing>__<objects>.json`` and ``.mp4`` (an MP4 video); ``summary.json``;
 ``results.md``
 (the finishes; what each robot ended up believing of its partner's object, destination and
@@ -445,6 +452,14 @@ def main() -> None:
                              "_staged).  By default two, by the partner's hands: while it holds "
                              "nothing its actions tell which object it wants, while it holds an "
                              "object where it takes it (and its social goal either way)")
+    parser.add_argument("--joint-posterior", action="store_true",
+                        help="Config.belief_factored=False: one joint posterior over (object, "
+                             "destination), the destination believed under each object apart "
+                             "(the update until 2026-11-04; the folders without _objgoal).  By "
+                             "default the two apart: a posterior about the partner's object, "
+                             "updated while its hands are empty, and one about its destination, "
+                             "updated while it holds an object, each frozen in the other's "
+                             "stage")
     parser.add_argument("--max-memory-gib", type=float, default=None, metavar="GIB",
                         help="Config.max_memory_gib: the most the solver may use (default 48; "
                              "the machine's memory caps it anyway).  The two-spare scene at the "
@@ -480,6 +495,33 @@ def main() -> None:
                              "action's evidence; at its place, give or swap, the belief about "
                              "its destination (1: forgotten altogether; default 0; folders "
                              "..._handhazard<H>)")
+    parser.add_argument("--inference-temperature", type=float, default=None, metavar="T",
+                        help="Config.inference_temperature (since 2026-11-04): the likelihood of "
+                             "both posteriors about the partner is each hypothesis model's softmax "
+                             "at tau_inf = T x c(move) instead of Eq. 7's tau -- psi^eta "
+                             "renormalised, eta = tau / tau_inf -- so that a move counts "
+                             "e^(-eta dQ / tau): softer evidence, the partner read as less exact "
+                             "than the models make it (0.5: Baker, Saxe & Tenenbaum 2009's fit to "
+                             "people).  The robots still plan at Eq. 7's tau.  Default: Eq. 7's "
+                             "tau (folders ..._inftau<T>)")
+    parser.add_argument("--lapse", type=float, default=0.0, metavar="E",
+                        help="Config.belief_lapse (since 2026-11-04): a lapse in the likelihood "
+                             "of both posteriors about the partner -- each hypothesis model's "
+                             "policy read as (1 - E) psi + E / |A|, the partner picking an "
+                             "allowed action at random with probability E -- so that one odd "
+                             "move costs a hypothesis at most a factor of about |A| / E (100 at "
+                             "E = 0.05 and five moves) instead of e^(-dQ / tau).  Default 0: "
+                             "Eqs. 5-6 as printed (folders ..._lapse<E>)")
+    parser.add_argument("--lazy", type=float, default=0.0, metavar="MASS",
+                        help="Config.lazy_mass (since 2026-11-04): of a level-2 robot's hypothesis "
+                             "models about its partner, the lightest ones whose mass in its two "
+                             "posteriors adds up to at most MASS keep the values and policies of "
+                             "their last solve instead of being re-solved every transition "
+                             "(every model at least every --lazy-period transitions).  Default "
+                             "0: every model every transition (folders ..._lazy<MASS>)")
+    parser.add_argument("--lazy-period", type=int, default=Config().lazy_period, metavar="N",
+                        help="Config.lazy_period: with --lazy, every hypothesis model is solved "
+                             "at least every N transitions (default 5)")
     args = parser.parse_args()
     taus = None if args.temperature is None else tuple(args.temperature)
     if taus is not None and len(taus) not in (1, 2):
@@ -512,6 +554,8 @@ def main() -> None:
         options = dict(options, inertia=inertia)
     if args.one_posterior:
         options = dict(options, belief_stages=False)
+    if args.joint_posterior:
+        options = dict(options, belief_factored=False)
     if taus is not None and len(taus) == 1:
         options = dict(options, temperature=taus[0])
     elif taus is not None:                 # a tau per robot (2026-11-01)
@@ -527,6 +571,21 @@ def main() -> None:
                      ("hand_hazard", "handhazard", args.hand_hazard)) if value)
     for key, _, value in hazards:
         options = dict(options, **{key: value})
+    # a lapse in the likelihood (2026-11-04): 0 (none) is the default and the folders of before
+    if args.lapse < 0.0 or args.lapse >= 1.0:
+        parser.error("--lapse takes a number in [0, 1)")
+    if args.lapse > 0.0:
+        options = dict(options, belief_lapse=args.lapse)
+    # the likelihood's own temperature (2026-11-04): None (Eq. 7's tau) is the default and the
+    # folders of before
+    inftau = args.inference_temperature
+    if inftau is not None and not (np.isfinite(inftau) and inftau > 0.0):
+        parser.error("--inference-temperature takes a number > 0")
+    if inftau is not None:
+        options = dict(options, inference_temperature=inftau)
+    # lazy hypotheses (2026-11-04): an approximation of the solve, so it names its folder
+    if args.lazy > 0.0:
+        options = dict(options, lazy_mass=args.lazy, lazy_period=args.lazy_period)
     if args.max_memory_gib is not None:         # (not in the folder name: same model)
         options = dict(options, max_memory_gib=args.max_memory_gib)
     if args.verbose:
@@ -544,6 +603,7 @@ def main() -> None:
                      else f"_pick{hands.pick_steps}x{hands.pick_cost_rate:g}"
                           f"_hand{hands.use_cost_rate:g}"))
     staged = Config(**options).belief_stages
+    factored = Config(**options).belief_factored
     spoiler = not Config(**options).hinder_own_goal
     rule = Config(**options).cooperate_with
     level_free_level = Config(**options).level_free_level
@@ -560,9 +620,14 @@ def main() -> None:
            + byhand              # nothing automatic, a pick-up of three (2026-10-18)
            + "_eq56"             # Eqs. 5-6 as the authors' solver keeps them (2026-10-30)
            + ("l0" if Config(**options).physical_likelihood == "level0" else "")
-           + "".join(f"_{flag}{value:g}" for _, flag, value in hazards))
-    #        (... with the physical posterior on the level-0 policies, the authors' code; and
-    #        the hazards of the partner's goal, 2026-11-02)
+           + ("_objgoal" if factored else "")     # the two posteriors apart (2026-11-04)
+           + ("" if inftau is None else f"_inftau{inftau:g}")
+           + ("" if args.lapse <= 0.0 else f"_lapse{args.lapse:g}")
+           + "".join(f"_{flag}{value:g}" for _, flag, value in hazards)
+           + ("" if args.lazy <= 0.0 else f"_lazy{args.lazy:g}"))
+    #        (... with the physical posterior on the level-0 policies, the authors' code; the
+    #        likelihood's own temperature and a lapse in it, 2026-11-04; the hazards of the
+    #        partner's goal, 2026-11-02; and lazy hypotheses, 2026-11-04)
     task = Config(**options).conflict == "task"
     # --conflict task: a level-2 conflict robot paid -w r(g_j) against every partner
     # (2026-11-01), in ..._taskconflict.  The folder of the same options under the other
@@ -624,9 +689,13 @@ def main() -> None:
                                     + ("" if carry is None else f"     carry {carry:g}")
                                     + ("     hinder: no own goal" if spoiler else "")
                                     + ("" if inertia is None else f"     inertia {inertia:g}")
-                                    + ("     two posteriors" if staged else "")
+                                    + ("" if not staged else "     object / goal posteriors"
+                                       if factored else "     two posteriors")
+                                    + ("" if inftau is None else f"     inference tau {inftau:g}")
+                                    + ("" if args.lapse <= 0.0 else f"     lapse {args.lapse:g}")
                                     + "".join(f"     {HAZARD_LABELS[key]} {value:g}"
-                                              for key, _, value in hazards))
+                                              for key, _, value in hazards)
+                                    + ("" if args.lazy <= 0.0 else f"     lazy {args.lazy:g}"))
     title = (f"Which object the partner wants, inferred or known: {scene.name} scene, w = 1 / 1"
              + ("" if args.max_objects is None else f", {args.max_objects} objects in the model")
              + ("" if G.cooperation_reading(rule) == "Table I"
@@ -647,9 +716,23 @@ def main() -> None:
              + ("" if inertia is None else
                 f", inertia: no undoing the last action unless it is worth {inertia:g} x a "
                 f"move's cost more than the next best")
-             + (", two posteriors by the partner's hands (its object while it holds nothing, "
-                "its destination while it holds an object)" if staged else "")
-             + "".join(f", {HAZARD_TEXT[key]} {value:g}" for key, _, value in hazards))
+             + ("" if not staged else
+                ", a posterior about the partner's object, learnt while it holds nothing, and "
+                "one about its destination, learnt while it holds an object, each frozen while "
+                "the other learns" if factored else
+                ", two posteriors by the partner's hands (its object while it holds nothing, "
+                "its destination while it holds an object)")
+             + ("" if inftau is None else
+                f", the likelihood at a tau of its own, {inftau:g} x a move's cost (the robots "
+                f"plan at Eq. 7's)")
+             + ("" if args.lapse <= 0.0 else
+                f", a lapse in the likelihood: the partner read as acting at random with "
+                f"probability {args.lapse:g}, (1 - {args.lapse:g}) psi + {args.lapse:g} / |A|")
+             + "".join(f", {HAZARD_TEXT[key]} {value:g}" for key, _, value in hazards)
+             + ("" if args.lazy <= 0.0 else
+                f", lazy hypotheses: the lightest {args.lazy:g} of each robot's hypothesis mass "
+                f"left as last solved, every model solved at least every {args.lazy_period} "
+                f"transitions"))
     (out / "results.md").write_text(table(rows, title))
     draw(records, title, out / "results.png")
     summary = dict(scene=scene.to_json(), options=options, weights=(1.0, 1.0),

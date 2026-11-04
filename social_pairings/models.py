@@ -27,7 +27,13 @@ since 2026-10-30, in place of one joint posterior over (object, destination, soc
   authors' PGE) -- in two stages, by robot j's hands (``Config.belief_stages``, the user's
   rule of 2026-10-17): while robot j holds nothing its actions are evidence about which
   object it wants and none about its destination; while it holds an object, evidence
-  about its destination and none about its object;
+  about its destination and none about its object.  Since 2026-11-04
+  (``Config.belief_factored``, the user: "WE SHOULD HAVE TWO POSTERIORS one for goal and
+  one for objects") it is the product of two posteriors, one about the object and one
+  about the destination (:meth:`SocialMDP.factors`, :meth:`SocialMDP.product`), each
+  learnt in its stage and frozen in the other's (:meth:`SocialMDP.factored_posterior`):
+  the destination is believed whatever the object, so that a destination only the less
+  likely object explains can still win;
 * the *social* posterior ``about[j].log_social`` over the social goals held possible,
   updated by the likelihood of robot j's level-1 hypothesis policies averaged over the
   physical posterior (Eq. 5; the authors' SGE);
@@ -39,10 +45,14 @@ since 2026-10-30, in place of one joint posterior over (object, destination, soc
   the partner takes or not, the partner's own set-down that finishes or does nothing --
   rule the hypotheses out that predicted otherwise.
 
-Nothing else is in the update (the lapse, the carry and park tables, the "outcome"
-observation and the separate inference temperature of before are gone): the likelihood is
-Eq. 7's softmax of the hypothesis model's Q at the state, at Eq. 7's tau, of the action the
-partner chose.
+Nothing else is in the update (the carry and park tables and the "outcome" observation of
+before are gone): the likelihood is Eq. 7's softmax of the hypothesis model's Q at the
+state, at Eq. 7's tau, of the action the partner chose.  Since 2026-11-04, two options, off
+by default, soften it: a temperature of the update's own (``Config.inference_temperature``:
+the softmax at tau_inf, i.e. ``psi^eta`` renormalised, eta = tau / tau_inf; the robots still
+plan at Eq. 7's tau) and a lapse (``Config.belief_lapse``: ``(1 - e) psi + e / |A|``, the
+partner taken to pick an allowed action at random with probability e, so that one odd move
+cannot cost a hypothesis more than a factor of about ``|A| / e``; :meth:`SocialMDP.lapsed`).
 
 **A tau per robot** (``Config.robot_temperatures``, 2026-11-01): robot i reads its partner at
 its own tau, ``taus[i]`` -- the Eq. 7 policies it predicts the partner by and the likelihood
@@ -339,6 +349,9 @@ class SocialMDP:
         # is softmaxed at its partner's tau, taus[1 - o] (read_inv_tau[o] = 1 / that)
         self.taus = (cfg.tau_of(0), cfg.tau_of(1))
         self.read_inv_tau = np.array([1.0 / self.taus[1], 1.0 / self.taus[0]])
+        # ... and the tau of robot i's update about its partner (the likelihood of Eqs. 5-6):
+        # the same, or Config.inference_temperature where set (2026-11-04)
+        self.inference_taus = (cfg.inference_tau_of(0), cfg.inference_tau_of(1))
         self.exchange_share = float(cfg.exchange_share)
         self.cost_in_partner_reward = 1.0 if cfg.social_cost else 0.0
         self.lead = G.lead_weight(cfg.competition)       # of the race term (goals.py)
@@ -399,6 +412,12 @@ class SocialMDP:
         self._budget_memory()
         self.krylov_by_stage = {0: 0.0, 1: 0.0, 2: 0.0}
         self.tasks: list = []
+        # lazy hypotheses (Config.lazy_mass): the transition each model was last solved at,
+        # and what the last plan left stale (plan, lazy_rows)
+        self.transition = 0
+        self.last_solved = {1: np.full(self.L1.M, -1, dtype=np.int64),
+                            2: np.full(self.L2.M, -1, dtype=np.int64)}
+        self.lazy_info = None
 
     # ---- construction ------------------------------------------------------------------------
     def _initial_belief(self, j: int) -> PartnerBelief:
@@ -694,11 +713,13 @@ class SocialMDP:
     def plan(self, state) -> None:
         """Mark the models to solve from ``state``: every slot's models, except the level-1
         partner models of a physical goal that the partner's posterior has ruled out
-        altogether (the transition term of Eq. 5 can)."""
+        altogether (the transition term of Eq. 5 can) -- and, ``Config.lazy_mass`` > 0,
+        except the partner hypotheses left stale this transition (:meth:`lazy_rows`)."""
         block = int(state[2])
         for bank in (self.L1, self.L2):
             bank.active[:] = False
         self.tasks = []                          # (depth, slot, rows, keys)
+        lazy = self.lazy_rows() if self.cfg.lazy_mass > 0.0 else None
         for key in sorted(self.slots, key=lambda kk: (kk[1], kk[0], kk[2])):
             slot = self.slots[key]
             a, depth, group = key
@@ -707,11 +728,73 @@ class SocialMDP:
                     and not (self.levels[a] == 1 and group == self.own_goal[a])):
                 continue
             bank = self.bank(depth)
-            rows = slot.model_rows
+            rows, keys = slot.model_rows, list(slot.model_keys)
+            if lazy is not None and depth == 1:
+                pick = [n for n, r in enumerate(rows.tolist()) if r in lazy]
+                if not pick:
+                    continue
+                rows = rows[pick]
+                keys = [keys[n] for n in pick]
             bank.active[rows] = True
             bank.p_of[rows] = slot.p_row
             bank.block[rows] = block
-            self.tasks.append((depth, slot, rows.copy(), list(slot.model_keys)))
+            self.last_solved[depth][rows] = self.transition
+            self.tasks.append((depth, slot, rows.copy(), keys))
+        self.transition += 1
+
+    def lazy_rows(self) -> set:
+        """Lazy hypotheses (``Config.lazy_mass``, 2026-11-04): the level-1 partner
+        hypotheses to solve this transition.  A level-2 robot predicts its partner by the
+        partner's level-1 models mixed by its two posteriors (Eq. 4), and reads each
+        model's policy for the likelihood of what the partner did (Eqs. 5-6).  The models
+        of the hypotheses that carry little mass -- the least likely physical goals, the
+        least likely social goals -- hardly move that prediction, so they are left as last
+        solved: of each robot's hypothesis models, in order of their mass
+        ``b_g(g) b_xi(xi)`` (the hypotheses of one model summed), the lightest ones whose
+        masses add up to at most ``lazy_mass`` are skipped, every model is solved at least
+        every ``lazy_period`` transitions, and every model is solved at the first
+        transition.  A skipped model keeps its values and its stored policy (``psi``): the
+        root plans with them as they were, and the likelihood of that hypothesis is read
+        off them, a few transitions stale.  The roots and twins are always solved; so are
+        the level-1 roots of a level-1 robot.  Exact at ``lazy_mass`` = 0 (the default:
+        every model every transition).  ``lazy_info``: per robot, (models skipped, their
+        mass, models solved)."""
+        cfg, L1 = self.cfg, self.L1
+        keep = set()
+        info = []
+        for a in (0, 1):
+            weight: Dict[int, float] = {}
+            if self.levels[1 - a] == 2:
+                phys = self.about[a].phys()
+                social = self.about[a].social()
+                hyp = self.hyp_goals[1 - a]
+                for k in range(self.PG):
+                    if not np.isfinite(self.about[a].log_phys[k]):
+                        continue
+                    for t in range(len(hyp)):
+                        r = self.hypothesis_row(a, k, t)
+                        weight[r] = weight.get(r, 0.0) + float(phys[k] * social[t])
+            always = {r for r in weight
+                      if (L1.psi_row[r] < 0                      # a root or twin, no hypothesis
+                          or self.last_solved[1][r] < 0           # never solved
+                          or self.transition - self.last_solved[1][r] >= cfg.lazy_period)}
+            order = sorted(weight, key=lambda r: weight[r])
+            mass = 0.0
+            skipped = []
+            for r in order:
+                if r in always or mass + weight[r] > cfg.lazy_mass:
+                    keep.add(r)
+                else:
+                    mass += weight[r]
+                    skipped.append(r)
+            for key, slot in self.slots.items():
+                if slot.agent == a and slot.depth == 1:      # roots and twins of level-1 robots
+                    for r in slot.model_rows.tolist():
+                        if r not in weight:
+                            keep.add(r)
+            info.append((len(skipped), mass, len(weight) - len(skipped)))
+        self.lazy_info = tuple(info)
+        return keep
 
     def init_models(self) -> None:
         """Warm start of the first solve: every model starts from its robot's solo values."""
@@ -1174,20 +1257,41 @@ class SocialMDP:
     # ---- beliefs: the likelihoods ------------------------------------------------------------
     def _log_policy(self, model: Tuple[int, int], s: int, robot: int) -> np.ndarray:
         """(10,) log of Eq. 7's policy of ``model`` (a model of robot ``robot``) at joint
-        state s: softmax(Q / tau) at the tau robot ``robot`` is read at -- its partner's, the
-        robot whose belief this likelihood updates -- -inf where illegal."""
-        return log_softmax(self.q_values(model, s, robot) / self.taus[1 - robot])
+        state s, as the likelihood of the belief update reads it: softmax(Q / tau) at the tau
+        robot ``robot`` is read at -- its partner's, the robot whose belief this likelihood
+        updates -- or, under ``Config.inference_temperature`` (since 2026-11-04), at that
+        tau; -inf where illegal.  (The robots' own planning reads the models at Eq. 7's
+        tau, from the kernels' stored policies.)"""
+        return log_softmax(self.q_values(model, s, robot) / self.inference_taus[1 - robot])
+
+    def lapsed(self, log_pol: np.ndarray) -> np.ndarray:
+        """(10,) the likelihood a policy gives each action under the lapse
+        (``Config.belief_lapse`` = e): log((1 - e) psi(a) + e / |A|), A the actions the
+        policy allows (its finite entries), -inf elsewhere as before.  e = 0: ``log_pol``."""
+        e = float(self.cfg.belief_lapse)
+        if e <= 0.0:
+            return log_pol
+        allowed = np.isfinite(log_pol)
+        n = int(allowed.sum())
+        if n == 0:
+            return log_pol
+        with np.errstate(divide="ignore"):
+            return np.where(allowed, np.logaddexp(np.log1p(-e) + log_pol, np.log(e / n)),
+                            -np.inf)
 
     def physical_log_likelihood(self, j: int, s: int, a: int) -> np.ndarray:
         """(PG,) log psi^0_{j,g}(a | s) of robot j's level-0 model under each of its physical
-        goals: the likelihood of Eq. 6 (the authors' physical-goal estimation)."""
+        goals: the likelihood of Eq. 6 (the authors' physical-goal estimation); under the
+        lapse (``Config.belief_lapse``), :meth:`lapsed`."""
         K = self.PG
-        return np.array([self._log_policy((0, j * K + g), s, j)[a] for g in range(K)])
+        return np.array([self.lapsed(self._log_policy((0, j * K + g), s, j))[a]
+                         for g in range(K)])
 
     def hypothesis_log_policies(self, j: int, s: int, a: int, log_phys: np.ndarray) -> np.ndarray:
         """(PG, n_types) log psi^1_{j,(g,t)}(a | s) of robot j's level-1 hypothesis models
         (-inf for a physical goal the posterior ``log_phys`` has ruled out: its models are
-        not kept)."""
+        not kept); under the lapse (``Config.belief_lapse``), :meth:`lapsed`.  Both posteriors
+        read them: Eq. 6 averaged over the social posterior, Eq. 5 over the physical one."""
         hyp = self.hyp_goals[1 - j]
         rows: dict = {}
         out = np.full((self.PG, len(hyp)), -np.inf)
@@ -1197,7 +1301,7 @@ class SocialMDP:
             for t in range(len(hyp)):
                 r = self.hypothesis_row(j, g, t)
                 if r not in rows:
-                    rows[r] = self._log_policy((1, r), s, j)
+                    rows[r] = self.lapsed(self._log_policy((1, r), s, j))
                 out[g, t] = rows[r][a]
         return out
 
@@ -1284,6 +1388,14 @@ class SocialMDP:
         if h <= 0.0:
             return log_phys
         log_phys = normalize_log(np.asarray(log_phys, dtype=np.float64))
+        if self.cfg.belief_factored:     # the two posteriors apart: mix the one that learns
+            lo, ld = self.factors(j, log_phys)
+            both = not self.cfg.belief_stages
+            if objects or both:
+                lo = mix_uniform(lo, h)
+            if not objects or both:
+                ld = mix_uniform(ld, h)
+            return self.product(j, lo, ld)
         if not self.cfg.belief_stages:
             return mix_uniform(log_phys, h)
         obj = self.pg_obj[j]
@@ -1302,6 +1414,45 @@ class SocialMDP:
                     sel = obj == q
                     out[sel] = mix_uniform(log_phys[sel] - m, h) + m
         return out
+
+    def factors(self, j: int, log_phys: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """The two physical posteriors about robot j (``Config.belief_factored``): the
+        belief about its object, (M,), and the one about its destination, (K,) -- each the
+        marginal of the (object, destination) belief ``log_phys`` (PG,), in logs, -inf where
+        nothing is left.  With the partner's object known, the object's is all on its own."""
+        obj, dst = self.pg_obj[j], self.pg_dst[j]
+        lo = np.full(self.w.M, -np.inf)
+        ld = np.full(self.w.K, -np.inf)
+        for q in np.unique(obj):
+            lo[q] = _log_sum(log_phys[obj == q])
+        for d in np.unique(dst):
+            ld[d] = _log_sum(log_phys[dst == d])
+        return normalize_log(lo), normalize_log(ld)
+
+    def product(self, j: int, log_obj: np.ndarray, log_dst: np.ndarray) -> np.ndarray:
+        """(PG,) the belief over robot j's physical goals of the two posteriors:
+        b(o, d) = b_O(o) b_D(d), in logs."""
+        with np.errstate(invalid="ignore"):
+            return normalize_log(log_obj[self.pg_obj[j]] + log_dst[self.pg_dst[j]])
+
+    def factored_posterior(self, j: int, post: np.ndarray, hard: np.ndarray,
+                           empty: bool) -> np.ndarray:
+        """``Config.belief_factored``: the two posteriors about robot j after one action --
+        ``post`` (PG,), unnormalised log, the prior times the likelihood of the action and
+        the transition term; ``hard`` the prior times the transition term alone.  The
+        posterior that learns in this stage is the marginal of ``post`` -- while robot j's
+        hands are empty the one about its object, b_O'(o) ∝ b_O(o) sum_d b_D(d) psi_(o,d)(a),
+        holding an object the one about its destination, b_D'(d) ∝ b_D(d) sum_o b_O(o)
+        psi_(o,d)(a): the likelihood of the action under each, the other averaged out -- and
+        the frozen one is the marginal of ``hard``: as it was, but for what the hands'
+        outcomes ruled out.  Without the stages (``Config.belief_stages=False``) both
+        learn.  -> (PG,) the product, normalised."""
+        stages = self.cfg.belief_stages
+        lo_post, ld_post = self.factors(j, post)
+        lo_hard, ld_hard = self.factors(j, hard)
+        lo = lo_post if (empty or not stages) else lo_hard
+        ld = ld_post if (not empty or not stages) else ld_hard
+        return self.product(j, lo, ld)
 
     def staged_log_likelihood(self, j: int, log_phys: np.ndarray, log_lik: np.ndarray,
                               empty: bool) -> np.ndarray:
@@ -1354,6 +1505,24 @@ class SocialMDP:
         hypothesis explains (the prior stands, but for what the transition term rules out);
         nothing while robot j lifts an object ("pick" is the one action open to it).
 
+        The two physical posteriors apart (``Config.belief_factored``, the default since
+        2026-11-04): the belief about robot j's object and the one about its destination,
+        the physical belief their product.  With robot j's hands empty its action updates
+        the object's posterior -- each object by the likelihood of the action under it, the
+        destinations averaged out under their posterior -- and the destination's stays as
+        it was; holding an object, the other way round (:meth:`factored_posterior`).  What
+        the hands' outcomes rule out (the transition term) acts on both.  Without it, one
+        joint posterior staged as until then (:meth:`staged_log_likelihood`,
+        :meth:`_renormalize_stage`).
+
+        The likelihood's temperature (``Config.inference_temperature``, since 2026-11-04,
+        None by default: Eq. 7's tau): the hypothesis models' softmax at tau_inf
+        (:meth:`_log_policy`), in both posteriors.  The lapse (``Config.belief_lapse``,
+        since 2026-11-04, 0 by default): every hypothesis model's likelihood of the action
+        is ``(1 - e) psi + e / |A|`` (:meth:`lapsed`), in both posteriors -- the partner may
+        pick an allowed action at random -- so that one move moves no hypothesis by more
+        than a factor of about ``|A| / e``.
+
         The partner's goal may change (since 2026-11-02, options, 0 by default):
         ``Config.hand_hazard`` mixes the factor of the physical prior a hand action speaks to
         toward the uniform before that action's evidence (its object at a pick-up or a take,
@@ -1388,20 +1557,26 @@ class SocialMDP:
                 raw = np.array([_log_sum(old.log_social + log_pol[g]) for g in range(self.PG)])
         else:                                    # the authors' code: the level-0 policies
             raw = self.physical_log_likelihood(j, s, a)
-        lik = self.staged_log_likelihood(j, prior, raw, empty)
+        factored = cfg.belief_factored
+        # the two posteriors apart (Config.belief_factored): each hypothesis's own likelihood,
+        # the factor that does not learn averaged out by the marginal below; one joint
+        # posterior (the rule until 2026-11-04): staged by the hands as it is updated
+        lik = raw if factored else self.staged_log_likelihood(j, prior, raw, empty)
         mix = _log_mix(lik, 1.0 - q0, l_idle, q0)                  # (PG,) log P(a | g)
         keep = self.transition_term(j, s, actions, nxt, event)
+        hard = np.where(keep, prior, -np.inf)                     # the hands' outcomes alone
         with np.errstate(invalid="ignore"):
             post = np.where(keep, prior + mix, -np.inf)
         explained = np.isfinite(post).any()
         if not explained:                        # nothing explains the action: the prior,
-            post = np.where(keep, prior, -np.inf)          # less what the hands ruled out
+            post = hard                                       # less what the hands ruled out
         if np.isfinite(post).any():
-            new.log_phys = self._renormalize_stage(j, post, prior, empty)
+            new.log_phys = (self.factored_posterior(j, post, hard, empty) if factored
+                            else self._renormalize_stage(j, post, prior, empty))
         # the physical prior over the goals the transition term keeps (T(s^t | s^{t-1}, a)
         # is the same under every social goal given the physical one): what the idle mode
         # and the social goals are judged against
-        kept = np.where(keep, prior, -np.inf)
+        kept = hard
         if np.isfinite(kept).any():
             kept = normalize_log(kept)
         else:

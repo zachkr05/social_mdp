@@ -21,7 +21,7 @@ from social_pairings.config import ADDED_FIELDS, written_with
 from social_pairings.constants import GIVE, HELD0, HOME, PICK, PLACE, WAIT
 from social_pairings.models import mix_uniform
 
-from .test_beliefs import engine_likelihoods, event_at, reference_update
+from .test_beliefs import engine_likelihoods, event_at, marginals, product, reference_update
 from .test_models import TINY, solved, tight_explicit
 
 HAZARDS = dict(goal_hazard=0.05, social_hazard=0.03, hand_hazard=0.5)
@@ -37,14 +37,23 @@ def mix(p, h):
     return out
 
 
-def factor_mix(p, h, objects, obj, stages=True):
+def factor_mix(p, h, objects, obj, stages=True, factored=False, dst=None):
     """The physical posterior p (PG,) mixed in one factor: the object (``objects``; the
     destination given each object kept), the destination given each object (its mass
-    kept), or -- without the stages -- whole."""
+    kept), or -- without the stages -- whole.  factored (``Config.belief_factored``, the two
+    posteriors apart): the object's posterior or the destination's mixed (both without the
+    stages), and the belief their product."""
     p = np.asarray(p, dtype=float)
     p = p / p.sum()
     if h <= 0.0:
         return p
+    if factored:
+        po, pd = marginals(p, np.asarray(obj), np.asarray(dst))
+        if objects or not stages:
+            po = mix(po, h)
+        if not objects or not stages:
+            pd = mix(pd, h)
+        return product(po, pd, np.asarray(obj), np.asarray(dst))
     if not stages:
         return mix(p, h)
     out = p.copy()
@@ -63,15 +72,16 @@ def factor_mix(p, h, objects, obj, stages=True):
 
 
 def reference_with_hazards(old, lik0, lik1, l_idle, keep, empty, holds_next, hand, obj, cfg,
-                           stages=True):
+                           stages=True, dst=None):
     """reference_update with the hazards: the hand hazard on the prior before the evidence,
     then the update, then goal_hazard and social_hazard after it."""
+    fac = cfg.belief_factored
     prior = old.phys()
     if hand and cfg.hand_hazard > 0.0:
-        prior = factor_mix(prior, cfg.hand_hazard, empty, obj, stages)
+        prior = factor_mix(prior, cfg.hand_hazard, empty, obj, stages, fac, dst)
     phys, social, idle = reference_update(prior, old.social(), old.idle, lik0, lik1, l_idle,
-                                          keep, empty, obj, cfg.idle_hazard, stages)
-    phys = factor_mix(phys, cfg.goal_hazard, not holds_next, obj, stages)
+                                          keep, empty, obj, cfg.idle_hazard, stages, fac, dst)
+    phys = factor_mix(phys, cfg.goal_hazard, not holds_next, obj, stages, fac, dst)
     if social is not None and cfg.social_hazard > 0.0:
         social = mix(social, cfg.social_hazard)
     return phys, social, idle
@@ -114,8 +124,40 @@ class Mixing(unittest.TestCase):
             np.testing.assert_allclose(np.exp(mix_uniform(logp + 3.0, 0.1)), mix(p, 0.1),
                                        atol=1e-14)                      # normalised first
 
-    def test_the_factors(self):
+    def test_the_two_posteriors_apart(self):
+        """The default since 2026-11-04 (``belief_factored``): the hazard mixes the object's
+        posterior or the destination's, the other kept, and the belief is their product."""
         cfg = tight_explicit(**HAZARDS)
+        self.assertTrue(cfg.belief_factored)
+        w, _, mdp, _, _ = solved(TINY, cfg, (2, 2), ("cooperation", "competition"), (1.0, 1.0),
+                                 seed=5)
+        for j in (0, 1):
+            obj, dst = mdp.pg_obj[j], mdp.pg_dst[j]
+            po, pd = marginals(mdp.about[j].phys(), obj, dst)
+            pd[0] = 0.0                                         # one destination ruled out
+            pd = pd / pd.sum()
+            p = product(po, pd, obj, dst)
+            with np.errstate(divide="ignore"):
+                logp = np.log(p)
+            for h in (0.1, 1.0):
+                for objects in (True, False):
+                    got = np.exp(mdp.hazard_phys(j, logp, h, objects=objects))
+                    np.testing.assert_allclose(got, factor_mix(p, h, objects, obj, True, True,
+                                                               dst), atol=1e-14)
+                    go, gd = marginals(got, obj, dst)
+                    if objects:
+                        np.testing.assert_allclose(gd, pd, atol=1e-12)     # kept
+                        np.testing.assert_allclose(go, mix(po, h), atol=1e-12)
+                    else:
+                        np.testing.assert_allclose(go, po, atol=1e-12)
+                        np.testing.assert_allclose(gd, mix(pd, h), atol=1e-12)
+                        self.assertTrue(np.all(gd[1:] >= h / (len(gd) - 1) - 1e-12))
+                    self.assertEqual(gd[0], 0.0)                  # ruled out stays out
+                    np.testing.assert_allclose(got, product(go, gd, obj, dst), atol=1e-14)
+
+    def test_the_factors(self):
+        """One joint posterior (``belief_factored=False``, the rule until 2026-11-04)."""
+        cfg = tight_explicit(belief_factored=False, **HAZARDS)
         w, _, mdp, _, _ = solved(TINY, cfg, (2, 2), ("cooperation", "competition"), (1.0, 1.0),
                                  seed=5)
         for j in (0, 1):
@@ -172,7 +214,7 @@ class Update(unittest.TestCase):
             holds_next = int(w.hold[nxt[2], j]) >= 0 or bool(w.busy[nxt[2], j])
             want = reference_with_hazards(old, lik0, lik1, l_idle, keep,
                                           int(w.hold[state[2], j]) < 0, holds_next, a >= PICK,
-                                          mdp.pg_obj[j], self.cfg, stages)
+                                          mdp.pg_obj[j], self.cfg, stages, mdp.pg_dst[j])
             got = mdp.updated_belief(j, s, actions, nxt, event)
             np.testing.assert_allclose(got.phys(), want[0], atol=1e-12)
             np.testing.assert_allclose(got.social(), want[1], atol=1e-12)
@@ -207,10 +249,13 @@ class Update(unittest.TestCase):
         got = mdp.updated_belief(0, s, (PICK, WAIT), nxt, event_at(w, state))
         lik0, lik1, l_idle = engine_likelihoods(mdp, 0, s, PICK)
         keep = mdp.transition_term(0, s, (PICK, WAIT), nxt, event_at(w, state))
+        fac = self.cfg.belief_factored
         plain = reference_update(old.phys(), old.social(), old.idle, lik0, lik1, l_idle, keep,
-                                 True, mdp.pg_obj[0], self.cfg.idle_hazard)[0]
+                                 True, mdp.pg_obj[0], self.cfg.idle_hazard, True, fac,
+                                 mdp.pg_dst[0])[0]
         self.assertGreater(np.abs(got.phys() - factor_mix(plain, self.cfg.goal_hazard, False,
-                                                          mdp.pg_obj[0])).max(), 1e-6)
+                                                          mdp.pg_obj[0], True, fac,
+                                                          mdp.pg_dst[0])).max(), 1e-6)
 
     def test_with_an_object_in_hand(self):
         w = self.w
@@ -319,7 +364,8 @@ class Rollout(unittest.TestCase):
                 holds_next = int(w.hold[nxt[2], j]) >= 0 or bool(w.busy[nxt[2], j])
                 want.append(reference_with_hazards(old, lik0, lik1, l_idle, keep,
                                                    int(w.hold[state[2], j]) < 0, holds_next,
-                                                   a >= PICK, mdp.pg_obj[j], cfg))
+                                                   a >= PICK, mdp.pg_obj[j], cfg, True,
+                                                   mdp.pg_dst[j]))
             mdp.observe(actions, s, nxt, event)
             for j in (0, 1):
                 np.testing.assert_allclose(mdp.about[j].phys(), want[j][0], atol=1e-10)
