@@ -69,6 +69,8 @@ def read(folders) -> list:
         lpow = float((summary.get("options") or {}).get("likelihood_power", 1.0))
         # a window on the evidence (since 2026-11-04; a folder of before: the whole past)
         window = int((summary.get("options") or {}).get("belief_window", 0))
+        # the protected likelihood (since 2026-11-04; a folder of before: Eq. 6 as printed)
+        phys = (summary.get("options") or {}).get("physical_likelihood", "level1")
         for r in summary["rows"]:
             if r.get("objects", "inferred") != "inferred":
                 continue
@@ -78,7 +80,7 @@ def read(folders) -> list:
                              goal_1=bool(own[0]), goal_2=bool(own[1]), steps=r["steps"],
                              stopped_by=r["stopped_by"], scene=scene, conflict=reading,
                              hazards=hazards, lapse=lapse, inftau=inftau, lpow=lpow,
-                             window=window, folder=str(folder)))
+                             window=window, phys=phys, folder=str(folder)))
     return rows
 
 
@@ -108,6 +110,12 @@ def scene_of(rows) -> str:
         name += ", likelihood powers mixed"
     elif powers != {1.0}:
         name += f", likelihood ^{powers.pop():g}"
+    physs = {r.get("phys") or "level1" for r in rows}
+    if len(physs) > 1:
+        name += ", physical likelihoods mixed"
+    elif physs != {"level1"}:
+        name += {"cut": ", protected likelihood (subgoals)",
+                 "level0": ", level-0 likelihood"}.get(physs.pop(), "")
     windows = {int(r.get("window") or 0) for r in rows}
     if len(windows) > 1:
         name += ", windows mixed"

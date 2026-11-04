@@ -110,6 +110,20 @@ softmax at $\tau_{inf}$ for the belief update only (the robots plan and act at E
 `LAPSE` (`--lapse`, `Config.belief_lapse`): $(1-\varepsilon)\psi + \varepsilon/|A|$. Not run on
 the testbed yet; tested on the tiny scene against the reference update (`test_beliefs.py`).
 
+## The protected likelihood: `PHYS=cut` (option, 2026-11-04)
+
+The user: "Ok let's go ahead and implement this and push to a new branch" (the formalization's
+Eq. 25). The partner's own task read by its no-social-goal models, its acts for the robot by
+subgoals that do not depend on its goal (README, "The partner's subgoals"):
+
+    PHYS=cut sh run_testbed.sh                                     # folders ..._eq56cut_objgoal
+    PHYS=cut TAUS="0.1 0.2" GOALS2="cooperation" GATE="" HOUSE="hall_crossing" NOVIDEO=0 sh run_testbed.sh
+
+No hazard by default (the formalization's recommendation for a fixed goal; `HAZARD=0.02` to
+compare). The subgoal settings are `--option-temperature`, `--option-detour`,
+`--option-start`, `--option-switch` of `examples/run_object_inference.py`. Tested on the tiny
+scene (`social_pairings/tests/test_cut.py`); not run closed-loop yet.
+
 ## A window on the evidence: `WINDOW` (option, 2026-11-04)
 
 The user: "Lets add a replay buffer such that the posterior only factors in the past 5 steps

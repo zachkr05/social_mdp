@@ -2216,6 +2216,76 @@ the hinderer, 1.8 x 1 x 1 x 0.58 x 0.088 for G1 against G5) still make G1 / G5 a
 at step 49 instead of 1 / 127 -- G5 still ahead until the move that tells them apart (51). A
 window forgets old evidence; it does not soften the likelihood of the step in it.
 
+## The partner's subgoals: a protected likelihood (option, since 2026-11-04)
+
+The user, of the hall_crossing testbed run (hinder / cooperation, tau 0.1, hazard 0.02), where
+green read red's set-down at G3 for green as "red's own goal is far" and stayed on G5 (0.94 at
+step 49, red in front of G1): "So how do you think we solve Green thinking that red wants to
+deliver to G5 and instead thinking its G1 since its closer"; "O so it goes back to that latent
+problem ... trying to incorporate the subgoals"; then the formalization of it (ChatGPT Pro,
+from our prompt: its Eq. 25), shown on that run, and "Ok let's go ahead and implement this".
+
+Why it went wrong (red's 42 level-1 hypothesis models re-solved at transitions 42, 43 and 48
+from the record): under the cooperation hypothesis red's willingness to give its object to
+green depends on what its own goal is worth, which discounting makes less the farther the
+goal (107-108 for G1 and G4, 101-104 for G0, G2, G5 at G3). Walking onto G3 to set O2 down
+there for green was the best move under cooperation only for G3 and the farthest candidate,
+G5 (likelihood of G1 against G5 3e-17); the set-down itself best for G0, G2 and G5 and 0.2 /
+0.3 reward units worse for G1 / G4 (x0.017 / x0.002 at tau 0.05); the step toward green, who
+red thought would take O2, x0.088 for G1. Red is a level-2 cooperator with a near goal that
+gives anyway; the level-1 cooperator green reads it by cannot.
+
+`Config.physical_likelihood="cut"` (`--physical-likelihood cut`, `PHYS=cut`; module
+`social_pairings.subgoals`): the likelihood of the physical posterior, in Eq. 6's place, is
+
+$$L(g) = \pi\,N_g(a) + (1-\pi)\,S(a),$$
+
+the idle mode mixed in after as for every likelihood. $N_g$ is the partner's level-1 model
+with physical goal $g$ and no social goal (its own task; the robot predicted at level 0 inside
+it, as in every level-1 model); $S(a) = \sum_{\xi, z} \omega(\xi, z)\,\kappa_z(a \mid s) / (1-\pi)$
+the social background, the policies of its subgoals weighted by the predictive belief
+$\omega(\xi, z) = \sum_g b(g)\,b(\xi)\,P(z \mid g, \xi)$; $\pi = \sum_\xi \omega(\xi, \text{own task})$.
+The subgoals of the partner toward the robot: deliver(c) and hand-off(h) (holding an object,
+set it down on candidate c for the robot, or on hand-off cell h), meet (holding, go next to
+the robot and hand it over), fetch(k) (hands empty, go and pick up object k), keepaway. Their
+policies, a softmax at `option_temperature` x c(move) of $-c(a) - c(\text{move})\,J_z(s')$,
+$J_z$ the moves left to the subgoal's act (keepaway: plus c(move) x the distance from the
+robot), do not depend on the partner's own goal. Cooperation and exchange may pursue the
+first four, weighted by the partner's belief about the robot's goal (that it wants k on c, or
+k); conflict, competition and hinder keepaway; coercion and none none. A new subgoal's prior
+under the partner's own goal $g$: $\chi(z \mid g, \xi, s) \propto w_\xi(z)\,e^{-\lambda\,\Delta C_g(z;s)}$,
+$\Delta C$ the extra moves it adds to the partner's way to its own next waypoint -- moves, not
+values, so the far goals are not the generous ones -- $\lambda$ = `option_detour` (log 2). A
+subgoal starts with `option_start` (0.05) per transition, ends at its act (the set-down, the
+hand-over, the pick-up) or when it is no longer possible, is interrupted with
+`option_switch` (0.02); keepaway ends with `option_keepaway_end` (0.2).
+
+The cut: the social posterior is Eq. 5 as before, on the level-1 social models; the subgoal
+belief $P(z \mid g, \xi)$ (`PartnerBelief.options`) is updated within each $(g, \xi)$ -- its own
+task by $N_g$, a subgoal by $\kappa_z$ -- and then predicted by the dynamics, so the social
+models never multiply the physical posterior a second time (cutting feedback, Plummer 2015;
+Jacob, Murray, Holmes & Robert 2017). What it guarantees: an act that only a subgoal explains
+moves no physical hypothesis against another ($\pi \to 0$: $L$ the same for every $g$); for any
+two hypotheses $L(g_1)/L(g_2)$ lies between 1 and $N_{g_1}/N_{g_2}$ -- the social background
+weakens the own-task evidence toward neutral, never reverses it (`test_cut.py`). The robots
+plan as before (inference only). Needs "none" among `social_hypotheses` and the partner's
+social goal inferred. The record's `belief_update` holds `cut` (pi, S, $N_g$, $L$, the
+expected subgoals and their $\kappa(a)$) and `subgoal_belief`; `tools/belief_step.py` prints
+them. Folders `..._eq56cut` (`_optT`, `_optD`, `_optS`, `_optI` where a subgoal option is set).
+
+On the hall_crossing run's recorded moves (a prototype of the same rule, red's "none" models
+re-solved at every carrying step, no hazard): at transition 42 $\pi$ = 0.06 (green expects red
+to be delivering to G3), $S$ = 0.54, $L$ = 0.498 for every destination (G3 0.549); at 43,
+$\pi$ = 0.04, $L$ flat, G3 ruled out by the set-down that did nothing; at 48, $\pi$ = 0.91,
+G1 / G5 = 1.66 (Eq. 6: 0.088), G4's $10^{-14}$ held at $L$ = 0.014 by the background. Green's
+belief: G1 0.64 at step 49 (Eq. 6: G5 0.94), 0.83 at 51, 0.99 at 53; G5 nil from step 20 (red
+stood next to it at 14-16 and did not deliver). What is left is the route: G4 0.95 at step
+48 while red walks west along row 10 -- G4 straight ahead, G1's model split between two
+routes -- until the step north. With the hazard 0.02, G1 0.61 at 51 (the floor keeps what
+was ruled out). Learning the social goal from the subgoals alone (not built) was worse: red's
+dodging read as keepaway, G4 0.985. Not run closed-loop yet; the subgoal settings are first
+choices.
+
 ## The belief update's workings in the record (since 2026-11-04)
 
 The user: "just have it put all diagnostics into the json file. All information for belief
@@ -4137,11 +4207,12 @@ every mix of levels ("Results").
 | `social_hypotheses` | the paper's five, `"none"`, `"hinder"` (`HYPOTHESES`) | the social goals a robot holds possible for its partner, each with the same prior. `PAPER_GOALS`: the paper's five, the default until 2026-10-08 |
 | `exchange_level1` | `"copy_unweighted"` | what an exchanger is at level 1, and so how a level-2 robot models an exchanging partner. `"copy_unweighted"`: the text's copy of the partner's goal without the weight, $n\,r(\tilde g_j)$; with goals inferred it is what lets two exchangers exchange (at every weight tried from 0.55 to 100, "An exchange scene"). `"none"`: Table I's N/A, the default until 2026-10-08. `"copy"`: the copy times the weight, $w\,n\,r(\tilde g_j)$ |
 | `idle_hypothesis` | `True` | an extra "the partner stays put" mode in the belief of every robot that models its partner, a two-mode filter on top of Eqs. 5-6 (`idle_hazard`, `idle_eps`): on since 2026-10-08 noon (off until then); it lets two level-2 rivals pass each other at $w = 30$ (13 / 15, a stand-off without it). The one device kept beside Eqs. 5-6 on 2026-10-30. The cost: a partner that waits on purpose is read as idle |
-| `physical_likelihood` | `"level1"` | the likelihood of Eq. 6, by which a robot updates its belief about its partner's physical goal: `"level1"`, the partner's level-1 hypothesis policies averaged over the social posterior, Eq. 6 as the paper prints it; `"level0"`, the partner's level-0 policies, as the authors' code (its physical-goal estimator runs on them), under which a partner's act for the robot is read as the partner's own goal ("The belief update of 2026-10-30"; since 2026-10-30) |
+| `physical_likelihood` | `"level1"` | the likelihood of Eq. 6, by which a robot updates its belief about its partner's physical goal: `"level1"`, the partner's level-1 hypothesis policies averaged over the social posterior, Eq. 6 as the paper prints it; `"level0"`, the partner's level-0 policies, as the authors' code (its physical-goal estimator runs on them), under which a partner's act for the robot is read as the partner's own goal ("The belief update of 2026-10-30"; since 2026-10-30); `"cut"`, the protected likelihood $\pi N_g(a) + (1-\pi) S(a)$ -- its own task by its level-1 "none" models, its acts for the robot by subgoals that do not depend on its goal -- under which neither reading of a helping act moves its physical goal ("The partner's subgoals"; since 2026-11-04; folders `..._eq56cut`) |
 | `condition_on_placement` | `True` | Eq. 5's transition term: what the hands reveal of the partner's goal -- its finishing, its own set-down that did nothing, the robot's set-down for it that counted or failed, a hand-over it took or not -- rules out the hypotheses that predicted otherwise ("The belief update of 2026-10-30"). `False`: the actions alone |
 | `inference_temperature` | `None` | the likelihood of Eqs. 5-6 at a tau of its own, $T \times c(\text{move})$: the hypothesis models' softmax at it, $\psi^\eta$ renormalised, $\eta = \tau/\tau_{inf}$; the robots still plan at Eq. 7's tau. `None`: Eq. 7's tau, Eqs. 5-6 as printed ("A softer likelihood"; an option since 2026-11-04; a device of before 2026-10-30, 0.5 there). Folders `..._inftau<T>` |
 | `belief_lapse` | `0` | a lapse in the likelihood: each model's policy read as $(1-\varepsilon)\psi + \varepsilon/|A|$, so that one step moves no hypothesis by more than about $|A|/\varepsilon$ ("A softer likelihood"; an option since 2026-11-04; a device of before 2026-10-30, 0.05 there). Folders `..._lapse<E>` |
 | `likelihood_power` | `1` | a tempered update: each posterior about the partner multiplied by its likelihood ^ $\alpha$ (the learning factor's, after the idle mode's mix; Eq. 5's), every observation counting $\alpha$ of itself ("A softer likelihood"; since 2026-11-04). 1: Bayes' rule. Folders `..._lpow<ALPHA>` |
+| `option_temperature`, `option_detour`, `option_start`, `option_switch`, `option_keepaway_end` | `0.5`, `log 2`, `0.05`, `0.02`, `0.2` | the partner's subgoals under `physical_likelihood="cut"`: their policies' temperature (x c(move)), a new subgoal's prior falling by $e^{-\lambda}$ per extra move, the probabilities per transition that a subgoal starts, is interrupted, that keeping away ends ("The partner's subgoals"; since 2026-11-04). Folders `..._optT`, `_optD`, `_optS`, `_optI` where set |
 | `belief_window` | `0` | a window on the evidence: each of the two physical posteriors from the uniform prior and the likelihoods of the last $n$ transitions of its own stage only -- the object's with the partner's hands empty, the destination's holding an object; what the hands' outcomes ruled out stays out; the goal hazard a floor ("A window on the evidence"; since 2026-11-04). 0: the whole past, Bayes' rule. Needs `belief_factored`, no `hand_hazard`. Folders `..._window<N>` |
 | `belief_detail` | `True` | every step's belief update in the record, trace `belief_update`: every hypothesis model's Q and what it made of the action, Eqs. 5-6's likelihoods per hypothesis, destination and object, the beliefs before and after ("The belief update's workings in the record"; since 2026-11-04; `tools/belief_step.py` prints a step). Not part of the model: `--resume` keeps a record made without it. `False` (`--no-belief-detail`, `NODETAIL=1`): the record of before |
 | `partner_delivers`, `partner_parks`, `partner_observed`, `social_belief`, `child_conditioning` | `False`, `False`, `"action"`, `"marginals"`, `False` | the devices of before 2026-10-30, gone: the carry and park tables, the "outcome" observation, the joint posterior, the conditioning of the partner's estimate on the robot's action inside $\tilde R_j$. Kept only so that the records of before can be read; `Config` raises on any other value (`BELIEF_DEVICES`). (The lapse and the belief temperature of then are options again: above) |

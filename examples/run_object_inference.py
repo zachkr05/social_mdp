@@ -52,7 +52,10 @@ belief update of Eqs. 5-6 as the authors' solver keeps it -- two posteriors, the
 filter, Eq. 5's transition term, nothing else (``social_pairings.models``), so that no
 folder of before, made with the devices of then, is kept by ``--resume``;
 ``--physical-likelihood level0``, the physical posterior on the partner's level-0 policies
-as in the authors' code rather than Eq. 6 as printed, writes to ``..._eq56l0``; since
+as in the authors' code rather than Eq. 6 as printed, writes to ``..._eq56l0``, and
+``--physical-likelihood cut`` (since 2026-11-04: the protected likelihood of the partner's
+subgoals, its own task read by its "none" models and its acts for the robot by subgoals that
+no physical goal predicts better; ``social_pairings.subgoals``) to ``..._eq56cut``; since
 2026-11-04 in ``..._eq56_objgoal``: the posterior about the partner's object and the one
 about its destination apart, each learnt in its stage and frozen in the other's
 (``Config.belief_factored``), ``--joint-posterior`` the update of before and the folder
@@ -472,11 +475,33 @@ def main() -> None:
     parser.add_argument("--verbose", action="store_true",
                         help="Config.verbose: print the model's size, level 0, and a line per "
                              "transition as it happens (for long runs)")
-    parser.add_argument("--physical-likelihood", choices=("level1", "level0"), default=None,
+    parser.add_argument("--physical-likelihood", choices=("level1", "level0", "cut"),
+                        default=None,
                         help="Config.physical_likelihood: the likelihood of Eq. 6.  level1 (the "
                              "default): the partner's level-1 hypothesis policies averaged over "
                              "the social posterior, Eq. 6 as the paper prints it.  level0: the "
-                             "partner's level-0 policies, the authors' code (folders ..._eq56l0)")
+                             "partner's level-0 policies, the authors' code (folders ..._eq56l0)."
+                             "  cut (since 2026-11-04): pi N_g(a) + (1 - pi) S(a) -- its own "
+                             "task by its level-1 'none' model, its acts for the robot by its "
+                             "subgoals (deliver, hand-off, meet, fetch, keep away), whose "
+                             "policies do not depend on its goal, weighted by the predictive "
+                             "belief; the social posterior Eq. 5 as before (folders "
+                             "..._eq56cut)")
+    parser.add_argument("--option-temperature", type=float, default=None, metavar="T",
+                        help="Config.option_temperature (with --physical-likelihood cut): the "
+                             "subgoals' policies at T x c(move) (default 0.5; folders "
+                             "..._optT<T> where set)")
+    parser.add_argument("--option-detour", type=float, default=None, metavar="LAMBDA",
+                        help="Config.option_detour: a new subgoal's prior falls by e^-LAMBDA "
+                             "per extra move it adds to the partner's own way (default log 2; "
+                             "folders ..._optD<LAMBDA> where set)")
+    parser.add_argument("--option-start", type=float, default=None, metavar="P",
+                        help="Config.option_start: the probability per transition that a "
+                             "subgoal starts (default 0.05; folders ..._optS<P> where set)")
+    parser.add_argument("--option-switch", type=float, default=None, metavar="P",
+                        help="Config.option_switch: the probability per transition that a "
+                             "subgoal is interrupted (default 0.02; folders ..._optI<P> where "
+                             "set)")
     parser.add_argument("--conflict", choices=G.CONFLICT_READINGS, default=Config().conflict,
                         help="Config.conflict: what a level-2 conflict robot is paid.  table "
                              "(the default): Table I as printed, -w R_j.  task (an option since "
@@ -589,6 +614,17 @@ def main() -> None:
         options = dict(options, robot_temperatures=taus)
     if args.physical_likelihood is not None:
         options = dict(options, physical_likelihood=args.physical_likelihood)
+    # the subgoals of the protected likelihood (2026-11-04): the defaults are the folders of
+    # "cut"; a value set names its folder
+    option_tags = []
+    for flag, field, tag in (("option_temperature", "option_temperature", "optT"),
+                             ("option_detour", "option_detour", "optD"),
+                             ("option_start", "option_start", "optS"),
+                             ("option_switch", "option_switch", "optI")):
+        value = getattr(args, flag)
+        if value is not None:
+            options = dict(options, **{field: float(value)})
+            option_tags.append(f"_{tag}{float(value):g}")
     options = dict(options, conflict=args.conflict)        # (2026-11-01: summary.json says it)
     # the partner's goal may change (2026-11-02): 0 (none) is the default and the folders of
     # before; a hazard names its folder
@@ -661,7 +697,8 @@ def main() -> None:
            + ("_staged" if staged else "")       # two posteriors by the hands (2026-10-17)
            + byhand              # nothing automatic, a pick-up of three (2026-10-18)
            + "_eq56"             # Eqs. 5-6 as the authors' solver keeps them (2026-10-30)
-           + ("l0" if Config(**options).physical_likelihood == "level0" else "")
+           + {"level0": "l0", "cut": "cut"}.get(Config(**options).physical_likelihood, "")
+           + "".join(option_tags)    # the subgoals of "cut", where set (2026-11-04)
            + ("_objgoal" if factored else "")     # the two posteriors apart (2026-11-04)
            + ("" if inftau is None else f"_inftau{inftau:g}")
            + ("" if args.lapse <= 0.0 else f"_lapse{args.lapse:g}")
@@ -739,6 +776,8 @@ def main() -> None:
                                     + ("" if args.lapse <= 0.0 else f"     lapse {args.lapse:g}")
                                     + ("" if lpow == 1.0 else f"     likelihood ^{lpow:g}")
                                     + ("" if window <= 0 else f"     window {window}")
+                                    + ("" if Config(**options).physical_likelihood != "cut"
+                                       else "     cut (subgoals)")
                                     + "".join(f"     {HAZARD_LABELS[key]} {value:g}"
                                               for key, _, value in hazards)
                                     + ("" if args.lazy <= 0.0 else f"     lazy {args.lazy:g}"))
@@ -777,6 +816,9 @@ def main() -> None:
                 f", a window on the evidence: each posterior from the last {window} transitions "
                 f"of its own stage (the object's with the partner's hands empty, the "
                 f"destination's holding)")
+             + ("" if Config(**options).physical_likelihood != "cut" else
+                ", the protected likelihood: the partner's own task read by its no-social-goal "
+                "models, its acts for the robot by subgoals that do not depend on its goal")
              + ("" if args.lapse <= 0.0 else
                 f", a lapse in the likelihood: the partner read as acting at random with "
                 f"probability {args.lapse:g}, (1 - {args.lapse:g}) psi + {args.lapse:g} / |A|")

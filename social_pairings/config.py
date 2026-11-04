@@ -14,7 +14,7 @@ from typing import Optional, Tuple
 import numpy as np
 
 from .goals import COMPETITION_FORMS, CONFLICT_READINGS, COOPERATE_WITH, SOCIAL_GOALS
-from .goals import cooperation_partners, parse_goal
+from .goals import NONE, cooperation_partners, parse_goal
 
 __all__ = ["Config", "SolverFailure", "PAPER_GOALS", "HYPOTHESES", "TOLD", "COOPERATE_WITH",
            "EVERY_PARTNER", "ADDED_FIELDS", "AUTOMATIC_HANDS", "written_with"]
@@ -89,6 +89,11 @@ ADDED_FIELDS = dict(
     belief_detail=False,           # 2026-11-04 (no record of the belief update's workings)
     likelihood_power=1.0,          # 2026-11-04 (Bayes' rule)
     belief_window=0,               # 2026-11-04 (every transition of the past counts)
+    option_temperature=0.5,        # 2026-11-04 (the subgoals of physical_likelihood="cut")
+    option_detour=0.6931471805599453,
+    option_start=0.05,
+    option_switch=0.02,
+    option_keepaway_end=0.2,
 )
 
 
@@ -430,7 +435,36 @@ class Config:
     # toward its object, sets the object down on the wrong candidate.  A level-1 robot,
     # which holds no social posterior, uses the level-0 policies either way.  (Added
     # 2026-10-30 with "level0" as the default; "level1" since the same evening.)
+    # "cut" (2026-11-04; the user: "So how do you think we solve Green thinking that red wants
+    # to deliver to G5 and instead thinking its G1 since its closer", then "Ok let's go ahead
+    # and implement this"): the protected likelihood of the partner's subgoals
+    # (social_pairings/subgoals.py),
+    #     L(g) = pi N_g(a) + (1 - pi) S(a),
+    # N_g the partner's level-1 model with goal g and no social goal (its own task), S the
+    # policies of its subgoals for the robot -- deliver, hand-off, meet, fetch, keep away;
+    # none of them depending on the partner's own goal -- weighted by the predictive belief
+    # over (social goal, subgoal), pi the predictive probability of its own task.  An act
+    # for the robot then moves no physical hypothesis against another, where under "level1"
+    # the cooperation hypothesis reads every generous act as "its own goal is far" (the
+    # hall_crossing testbed: red's set-down at G3 for green put green on G5, 0.94 at step 49
+    # with red in front of G1; under "cut", replayed on red's recorded moves, G1 0.64 there
+    # and G5 nil).  The social posterior stays Eq. 5 on the level-1 social models; the
+    # planner is untouched.  Needs "none" among social_hypotheses and the partner's social
+    # goal inferred.  Folders ..._eq56cut.
     physical_likelihood: str = "level1"
+    # The partner's subgoals under physical_likelihood="cut" (2026-11-04; subgoals.py): the
+    # temperature of their policies, in the unit of ``temperature`` (0.5 x c(move) = 0.25
+    # reward units: one extra move costs a subgoal's policy a factor e^-2); the detour
+    # penalty of a new subgoal per extra move it adds to the partner's own way (log 2: each
+    # extra move halves its prior); the probability per transition that a subgoal starts
+    # (where the partner's social goal allows one and it is possible), that one is
+    # interrupted, and that keeping away ends.  A subgoal also ends at its act (the
+    # set-down, the hand-over, the pick-up) or when it is no longer possible.
+    option_temperature: float = 0.5
+    option_detour: float = 0.6931471805599453
+    option_start: float = 0.05
+    option_switch: float = 0.02
+    option_keepaway_end: float = 0.2
     # Eq. 5's transition term T(s^t | s^{t-1}, a_J): the outcomes of the hands that depend on
     # the partner's hidden goal -- a set-down for the partner that counts (the partner's goal
     # is done) or fails, a hand-over the partner takes or not, the partner's own set-down
@@ -683,7 +717,7 @@ class Config:
         _one_of(self, "partner_social_goal", ("known", "inferred"))
         _one_of(self, "partner_object", ("known", "inferred"))
         _one_of(self, "social_belief", ("marginals",))
-        _one_of(self, "physical_likelihood", ("level0", "level1"))
+        _one_of(self, "physical_likelihood", ("level0", "level1", "cut"))
         _one_of(self, "partner_observed", ("action",))
         for name, value in BELIEF_DEVICES.items():   # the devices of before are gone
             if getattr(self, name) != value:
@@ -722,6 +756,27 @@ class Config:
             raise ValueError("social_hypotheses must name at least one social goal")
         for name in self.social_hypotheses:
             parse_goal(name)
+        if self.physical_likelihood == "cut":   # the partner's own task: its "none" models
+            if NONE not in [parse_goal(name) for name in self.social_hypotheses]:
+                raise ValueError('physical_likelihood="cut" reads the partner\'s own task by '
+                                 'its "none" models: put "none" among social_hypotheses')
+            if self.partner_social_goal != "inferred":
+                raise ValueError('physical_likelihood="cut" needs the partner\'s social goal '
+                                 'inferred (partner_social_goal="inferred")')
+        for name in ("option_temperature", "option_detour", "option_start", "option_switch",
+                     "option_keepaway_end"):
+            value = getattr(self, name)
+            if (isinstance(value, (bool, np.bool_))
+                    or not isinstance(value, (int, float, np.integer, np.floating))
+                    or not np.isfinite(value)):
+                raise ValueError(f"{name} must be a finite number")
+        if self.option_temperature <= 0.0:
+            raise ValueError("option_temperature must be > 0")
+        if self.option_detour < 0.0:
+            raise ValueError("option_detour must be >= 0 (per extra move)")
+        for name in ("option_start", "option_switch", "option_keepaway_end"):
+            if not 0.0 <= float(getattr(self, name)) <= 1.0:
+                raise ValueError(f"{name} must be a probability in [0, 1]")
         if self.cooperate_with is None or isinstance(self.cooperate_with, bool):
             raise ValueError("cooperate_with: name the partners' social goals, or 'all'")
         # the names, each once, in the order of SOCIAL_GOALS ("all": every one)

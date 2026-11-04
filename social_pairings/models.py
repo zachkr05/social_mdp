@@ -90,6 +90,7 @@ from .config import Config, SolverFailure
 from .constants import GIVE, JOINT, N_ACTIONS, PICK, PLACE, WORK_BYTES
 from .kernels import (inputs_level0, inputs_typed, policy_graph, policy_iteration,
                       softmax_policies)
+from .subgoals import Subgoals
 from .util import (block_items, check, log_softmax, memory_limit_bytes, normalize_log,
                    stay_table)
 from .world import ObjectWorld
@@ -275,11 +276,15 @@ class PartnerBelief:
         0 without it).
     window : what the windowed physical posteriors are built from (``Config.belief_window``
         >= 1; None without the window).
+    options : (PG, n_types, 1 + L) the belief about the robot's subgoal given each of its
+        physical goals and social goals, index 0 its own task (``Config.physical_likelihood
+        ="cut"``, :mod:`social_pairings.subgoals`; None otherwise).
     """
     log_phys: np.ndarray
     log_social: Optional[np.ndarray]
     idle: float
     window: Optional["EvidenceWindow"] = None
+    options: Optional[np.ndarray] = None
 
     def phys(self) -> np.ndarray:
         return np.exp(normalize_log(self.log_phys))
@@ -290,7 +295,8 @@ class PartnerBelief:
     def copy(self) -> "PartnerBelief":
         return PartnerBelief(self.log_phys.copy(),
                              None if self.log_social is None else self.log_social.copy(),
-                             float(self.idle), self.window)
+                             float(self.idle), self.window,
+                             None if self.options is None else self.options.copy())
 
 
 @dataclass(frozen=True)
@@ -462,6 +468,15 @@ class SocialMDP:
         self.slots: Dict[Tuple[int, int, int], BeliefSlot] = {}
         self.root: List[Optional[Tuple[int, int]]] = [None, None]   # (depth, row) per robot
         self.twin: List[Optional[Tuple[int, int]]] = [None, None]   # the same without social term
+        # ---- the partner's subgoals (Config.physical_likelihood="cut", 2026-11-04): robot j's
+        # as the robot that reads it at level 2 holds them possible, and the row of its
+        # "none" model, by which its own task is read ------------------------------------------
+        self.subgoals: List[Optional[Subgoals]] = [
+            Subgoals(w, cfg, j, self.hyp_goals[1 - j])
+            if cfg.physical_likelihood == "cut" and self.levels[1 - j] == 2 else None
+            for j in (0, 1)]
+        self.none_index = [list(self.hyp_goals[1 - j]).index(G.NONE)
+                           if self.subgoals[j] is not None else None for j in (0, 1)]
         # ---- the beliefs: about[j], what robot 1 - j believes of robot j --------------------
         self.about: List[PartnerBelief] = [self._initial_belief(j) for j in (0, 1)]
         self._build_models()
@@ -489,7 +504,11 @@ class SocialMDP:
         idle = float(cfg.idle_hazard) if cfg.idle_hypothesis else 0.0
         window = (EvidenceWindow(np.zeros(self.PG, dtype=bool)) if cfg.belief_window > 0
                   else None)                                      # Config.belief_window
-        return PartnerBelief(np.full(self.PG, -np.log(self.PG)), social, idle, window)
+        options = None
+        if self.subgoals[j] is not None:          # Config.physical_likelihood="cut": its own
+            options = np.zeros((self.PG, n, 1 + self.subgoals[j].L))   # task, no subgoal
+            options[:, :, 0] = 1.0
+        return PartnerBelief(np.full(self.PG, -np.log(self.PG)), social, idle, window, options)
 
     def level1_term(self, robot: int, goal: int) -> Tuple[float, float, float]:
         """(a, b, c) of ``robot`` with social goal ``goal`` at level 1: the coefficients of
@@ -1552,6 +1571,81 @@ class SocialMDP:
         ld = ld_post if (not empty or not stages) else ld_hard
         return self.product(j, lo, ld)
 
+    def cut_log_likelihood(self, j: int, s: int, a: int, prior: np.ndarray,
+                           old: PartnerBelief, log_pol: np.ndarray,
+                           detail: Optional[dict] = None) -> Tuple[np.ndarray, dict]:
+        """``Config.physical_likelihood="cut"`` (2026-11-04, :mod:`social_pairings.subgoals`):
+        (PG,) log L(g) = log(pi N_g(a) + (1 - pi) S(a)) of robot j's action a at joint
+        state s, for the physical posterior in Eq. 6's place (the idle mode is mixed in
+        after, as for every likelihood).
+
+        N_g(a): robot j's level-1 "none" model with physical goal g (its own task; from
+        ``log_pol``, at the likelihood's tau and lapse).  From the predictive belief, before
+        the action: omega(xi, z) = sum_g b(g) b(xi) P(z | g, xi), the share of its own task
+        pi = sum_xi omega(xi, own), and the social background S(a) = sum_{xi, z != own}
+        omega(xi, z) kappa_z(a | s) / (1 - pi) -- the same for every g, since no subgoal's
+        policy kappa_z depends on robot j's own goal.  -> (log L, what the subgoal update
+        reuses)."""
+        sg = self.subgoals[j]
+        w = self.w
+        st = w.unsid(s)
+        legal = self.legal(j, True, s)
+        cost = np.asarray(w.cost_c[st[2], j], dtype=np.float64)
+        kappa = sg.policies(st, legal, cost)                            # (L, 10)
+        k_a = kappa[:, a]                                               # (L,)
+        b_g = np.exp(normalize_log(prior))                              # (PG,)
+        b_xi = old.social()                                             # (n_types,)
+        P = old.options                                                 # (PG, n_types, 1 + L)
+        omega = np.einsum("g,t,gtz->tz", b_g, b_xi, P)                  # (n_types, 1 + L)
+        pi = float(min(max(omega[:, 0].sum(), 0.0), 1.0))
+        rest = 1.0 - pi
+        S = float((omega[:, 1:] * k_a[None, :]).sum() / rest) if rest > 1e-15 else 0.0
+        with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+            nav = np.exp(log_pol[:, self.none_index[j]])                # (PG,) N_g(a)
+            nav = np.where(np.isfinite(nav), nav, 0.0)
+            raw = np.log(pi * nav + rest * S)
+        raw = np.where(np.isfinite(prior), raw, -np.inf)
+        cut = dict(k_a=k_a, nav=nav, pi=pi, S=S)
+        if detail is not None:
+            detail["cut"] = dict(pi=pi, background=S, nav=nav.copy(), log_lik=raw.copy(),
+                                 subgoals=[sg.name(n) for n in range(sg.L)],
+                                 kappa=k_a.copy(), subgoal_mass=omega[:, 1:].sum(0))
+        return raw, cut
+
+    def updated_subgoals(self, j: int, s: int, a: int, nxt, old: PartnerBelief, cut: dict,
+                         q0: float, l_idle: float, detail: Optional[dict] = None) -> np.ndarray:
+        """``Config.physical_likelihood="cut"``: robot j's subgoal belief after its action a
+        -- within each physical goal g and social goal xi, P(z | g, xi) times the likelihood
+        of a under z (its own task: N_g(a); a subgoal: kappa_z(a | s); the idle mode mixed
+        in), normalised (a row nothing explains keeps its prior) -- then the subgoal
+        dynamics to ``nxt`` (:meth:`Subgoals.predict`): an act that ends a subgoal, one no
+        longer possible, a new one from the prior chi(z | g, xi, s') under robot j's belief
+        about its partner's goal (``about[1 - j]``).  -> (PG, n_types, 1 + L)."""
+        sg = self.subgoals[j]
+        w = self.w
+        st = w.unsid(s)
+        P = old.options
+        psi = np.empty_like(P)
+        psi[:, :, 0] = cut["nav"][:, None]
+        psi[:, :, 1:] = cut["k_a"][None, None, :]
+        idle = float(np.exp(l_idle)) if np.isfinite(l_idle) else 0.0
+        psi = (1.0 - q0) * psi + q0 * idle
+        post = P * psi
+        total = post.sum(-1, keepdims=True)
+        post = np.where(total > 0.0, post / np.where(total > 0.0, total, 1.0), P)
+        nxt = tuple(int(v) for v in nxt)
+        ended = sg.acted(st, a) | ~sg.feasible(nxt)
+        reader = self.about[1 - j]                  # robot j's belief about its partner
+        chi = sg.prior(nxt, self.pg_obj[j], self.pg_dst[j], reader.phys(),
+                       self.pg_obj[1 - j], self.pg_dst[1 - j])
+        out = sg.predict(post, chi, ended)
+        if detail is not None:
+            b_g = np.exp(normalize_log(old.log_phys))
+            mass = np.einsum("g,t,gtz->z", b_g, old.social(), out)
+            detail["subgoal_belief"] = dict(own_task=float(mass[0]), subgoals=mass[1:].copy(),
+                                            ended=ended.copy())
+        return out
+
     def windowed_posterior(self, j: int, win: EvidenceWindow, post: Optional[np.ndarray],
                            hard: np.ndarray, keep: np.ndarray, empty: bool
                            ) -> Tuple[np.ndarray, EvidenceWindow]:
@@ -1749,7 +1843,13 @@ class SocialMDP:
         # ---- the physical posterior (Eq. 6) ---------------------------------------------------
         log_pol = (self.hypothesis_log_policies(j, s, a, prior, detail)
                    if old.log_social is not None else None)
-        if cfg.physical_likelihood == "level1" and log_pol is not None:
+        cut = None
+        if (cfg.physical_likelihood == "cut" and log_pol is not None
+                and old.options is not None):
+            # the protected likelihood (subgoals.py): its own task by its "none" model, its
+            # acts for the robot by its subgoals, which no physical goal predicts better
+            raw, cut = self.cut_log_likelihood(j, s, a, prior, old, log_pol, detail)
+        elif cfg.physical_likelihood == "level1" and log_pol is not None:
             # the paper's Eq. 6 as printed: the level-1 models' likelihood, averaged over
             # the social posterior
             with np.errstate(invalid="ignore"):
@@ -1818,6 +1918,10 @@ class SocialMDP:
             if rec:
                 detail.update(social_log_lik=l_soc.copy(),
                               social_posterior=np.exp(new.log_social))
+        # ---- its subgoal (Config.physical_likelihood="cut"): updated within each physical and
+        # social goal, then the subgoal dynamics -- the prediction for the next transition
+        if cut is not None:
+            new.options = self.updated_subgoals(j, s, a, nxt, old, cut, q0, l_idle, detail)
         # ---- the partner's goal may change: the prediction step for the next transition ------
         # (Config.goal_hazard, social_hazard; Baker, Saxe & Tenenbaum 2009, M2): each
         # posterior mixed toward the uniform over the hypotheses it still holds possible --

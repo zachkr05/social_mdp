@@ -69,6 +69,9 @@
 # LPOW (since 2026-11-04; Config.likelihood_power, default 1 = Bayes' rule: a tempered update,
 # each posterior times its likelihood ^ LPOW, every observation counting LPOW of itself;
 # folders ..._lpow<ALPHA>),
+# PHYS=cut (since 2026-11-04; Config.physical_likelihood="cut": the protected likelihood -- the
+# partner's own task read by its no-social-goal models, its acts for the robot by subgoals
+# that do not depend on its goal, social_pairings/subgoals.py; folders ..._eq56cut),
 # WINDOW (since 2026-11-04; Config.belief_window, default 0 = the whole past: a window on the
 # evidence -- the posterior about the partner's object from the last WINDOW transitions with
 # its hands empty only, the one about its destination from the last WINDOW with an object in

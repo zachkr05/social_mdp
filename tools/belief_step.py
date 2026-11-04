@@ -130,6 +130,27 @@ def print_update(d: dict, i: int, actions, args) -> None:
     if not keep.all():
         out = [f"(O{obj[g] + 1}, G{dst[g]})" for g in np.flatnonzero(~keep)]
         print(f"\n  ruled out by what the hands did (Eq. 5's transition term): {', '.join(out)}")
+    cut = d.get("cut")
+    if cut is not None:                      # Config.physical_likelihood="cut" (2026-11-04)
+        print(f"\n  protected likelihood (Eq. 25): L(g) = pi N_g(a) + (1 - pi) S(a), "
+              f"pi = {cut['pi']:.3f} (its own task), S(a) = {cut['background']:.4g} (its "
+              f"subgoals); the idle mode mixed in after")
+        mass = arr(cut["subgoal_mass"])
+        kap = arr(cut["kappa"])
+        top = np.argsort(-mass)[:4]
+        print("    expected subgoals: " + ", ".join(
+            f"{cut['subgoals'][n]} {mass[n]:.3f} (kappa(a) {kap[n]:.3g})" for n in top
+            if mass[n] > 0))
+        nav, lik = arr(cut["nav"]), arr(cut["log_lik"])
+        for g in range(len(nav)):
+            if np.isfinite(lik[g]):
+                print(f"    (O{obj[g] + 1}, G{dst[g]}): N_g(a) {fmt(nav[g])}  L(g) "
+                      f"{fmt(np.exp(lik[g]))}")
+        sb = d.get("subgoal_belief")
+        if sb is not None:
+            print(f"    after: its own task {sb['own_task']:.3f}; " + ", ".join(
+                f"{cut['subgoals'][n]} {v:.3f}" for n, v in enumerate(arr(sb["subgoals"]))
+                if v > 0.005))
     win = d.get("window")
     if win is not None:                      # Config.belief_window (2026-11-04)
         print(f"\n  window ({win['n']} transitions per stage): the posteriors above are the "
