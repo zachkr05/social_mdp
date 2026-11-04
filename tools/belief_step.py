@@ -130,6 +130,21 @@ def print_update(d: dict, i: int, actions, args) -> None:
     if not keep.all():
         out = [f"(O{obj[g] + 1}, G{dst[g]})" for g in np.flatnonzero(~keep)]
         print(f"\n  ruled out by what the hands did (Eq. 5's transition term): {', '.join(out)}")
+    win = d.get("window")
+    if win is not None:                      # Config.belief_window (2026-11-04)
+        print(f"\n  window ({win['n']} transitions per stage): the posteriors above are the "
+              f"uniform prior times these likelihoods only (log, relative to the best)")
+        for key, names in (("objects", "O"), ("destinations", "G")):
+            for e in win[key]:
+                v = arr(e["log_lik"])
+                v = v - np.nanmax(v[np.isfinite(v)]) if np.isfinite(v).any() else v
+                tags = [f"O{k + 1}" if names == "O" else f"G{k}" for k in range(len(v))]
+                print(f"    {key[:-1]:>11} t={e['update']:3d}: "
+                      + "  ".join(f"{tg} {x:+.2f}" for tg, x in zip(tags, v)))
+        ruled = [g for g, x in enumerate(win["ruled_out"]) if x]
+        if ruled:
+            print("    ruled out for good: "
+                  + ", ".join(f"(O{obj[g] + 1}, G{dst[g]})" for g in ruled))
 
     # ---- model by model ---------------------------------------------------------------------
     m = d.get("models") or d.get("level0")

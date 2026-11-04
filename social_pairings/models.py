@@ -80,7 +80,7 @@ where the memory allows (``batch``), each to the Bellman-residual certificate
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -120,6 +120,24 @@ def _log_mix(log_a: np.ndarray, wa: float, log_b, wb: float) -> np.ndarray:
         la = np.where(wa > 0.0, np.log(wa) + log_a, -np.inf)
         lb = np.where(wb > 0.0, np.log(wb) + np.asarray(log_b, dtype=np.float64), -np.inf)
         return np.logaddexp(la, lb)
+
+
+def _group_log_lik(post: np.ndarray, hard: np.ndarray, group: np.ndarray, n: int) -> np.ndarray:
+    """(n,) log of the likelihood of one action under each group of physical hypotheses (an
+    object, or a destination; ``Config.belief_window``): log sum_{g in it} exp(post[g]) - log
+    sum exp(hard[g]), ``post`` the prior x likelihood x transition term and ``hard`` the prior
+    x transition term (unnormalised logs) -- the likelihood averaged over the rest of the
+    belief, given what the hands did.  0 for a group nothing is left of (the window's
+    ``ruled_out`` takes it out), -inf where no hypothesis of the group explains the action."""
+    out = np.zeros(n)
+    for q in range(n):
+        sel = group == q
+        if not sel.any():
+            continue
+        had = _log_sum(hard[sel])
+        if np.isfinite(had):
+            out[q] = _log_sum(post[sel]) - had
+    return out
 
 
 def _model_summary(q: np.ndarray, log_pol: np.ndarray, a: int) -> dict:
@@ -255,10 +273,13 @@ class PartnerBelief:
         for it -- None where its partner is below level 2.
     idle : the probability that it stands still whatever its goal (``Config.idle_hypothesis``;
         0 without it).
+    window : what the windowed physical posteriors are built from (``Config.belief_window``
+        >= 1; None without the window).
     """
     log_phys: np.ndarray
     log_social: Optional[np.ndarray]
     idle: float
+    window: Optional["EvidenceWindow"] = None
 
     def phys(self) -> np.ndarray:
         return np.exp(normalize_log(self.log_phys))
@@ -269,7 +290,26 @@ class PartnerBelief:
     def copy(self) -> "PartnerBelief":
         return PartnerBelief(self.log_phys.copy(),
                              None if self.log_social is None else self.log_social.copy(),
-                             float(self.idle))
+                             float(self.idle), self.window)
+
+
+@dataclass(frozen=True)
+class EvidenceWindow:
+    """``Config.belief_window`` (2026-11-04): what the two physical posteriors about one
+    robot are built from, afresh at every transition -- the uniform prior, what the hands'
+    outcomes ruled out, and the last n likelihoods of each stage.
+
+    ruled_out : (PG,) bool, what Eq. 5's transition term has ruled out so far (for good).
+    objects : ((update, (M,) log l(o)), ...), the last n transitions with the robot's hands
+        empty: the likelihood of its action under each object, the destination averaged out
+        under the belief of then (up to a constant).
+    destinations : ((update, (K,) log l(d)), ...), the last n with an object in its hands.
+    updates : how many updates the belief has had (the transition of the next one).
+    """
+    ruled_out: np.ndarray
+    objects: tuple = ()
+    destinations: tuple = ()
+    updates: int = 0
 
 
 @dataclass(eq=False)
@@ -447,7 +487,9 @@ class SocialMDP:
         n = len(self.hyp_goals[1 - j])
         social = np.full(n, -np.log(n)) if self.levels[1 - j] == 2 else None
         idle = float(cfg.idle_hazard) if cfg.idle_hypothesis else 0.0
-        return PartnerBelief(np.full(self.PG, -np.log(self.PG)), social, idle)
+        window = (EvidenceWindow(np.zeros(self.PG, dtype=bool)) if cfg.belief_window > 0
+                  else None)                                      # Config.belief_window
+        return PartnerBelief(np.full(self.PG, -np.log(self.PG)), social, idle, window)
 
     def level1_term(self, robot: int, goal: int) -> Tuple[float, float, float]:
         """(a, b, c) of ``robot`` with social goal ``goal`` at level 1: the coefficients of
@@ -1510,6 +1552,65 @@ class SocialMDP:
         ld = ld_post if (not empty or not stages) else ld_hard
         return self.product(j, lo, ld)
 
+    def windowed_posterior(self, j: int, win: EvidenceWindow, post: Optional[np.ndarray],
+                           hard: np.ndarray, keep: np.ndarray, empty: bool
+                           ) -> Tuple[np.ndarray, EvidenceWindow]:
+        """``Config.belief_window`` n >= 1 (2026-11-04): the two physical posteriors about
+        robot j built afresh from the window -- the uniform prior times the likelihoods of
+        the last n transitions of each one's own stage:
+
+            b_O(o) proportional to prod_{t in W_O} l_t(o)^alpha   (the last n, hands empty),
+            b_D(d) proportional to prod_{t in W_D} l_t(d)^alpha   (the last n, holding),
+
+        both from every transition without the stages; ``alpha`` = ``Config.likelihood_power``.
+        This transition's likelihood comes from ``post`` (the prior x the action's likelihood
+        x the transition term, unnormalised log; None where nothing explains the action, which
+        then adds nothing) against ``hard`` (the prior x the transition term): the learning
+        factor's, the other factor averaged out under the belief as it is now
+        (:func:`_group_log_lik`), as :meth:`factored_posterior` takes it.  What the hands'
+        outcomes ruled out (``keep``, this transition's term; ``win.ruled_out``, every one
+        before) stays out for good -- of the product, whose two marginals are the posteriors
+        (multiplied back, the two posteriors apart as everywhere else).  Without anything
+        left of the window's product, the hands' outcomes alone.  With n at least the number
+        of transitions, no hazard and nothing ruled out, this is :meth:`factored_posterior`
+        transition by transition (Bayes' rule).  -> (log_phys (PG,), the window after)."""
+        cfg = self.cfg
+        n, alpha = int(cfg.belief_window), float(cfg.likelihood_power)
+        stages = cfg.belief_stages
+        obj, dst = self.pg_obj[j], self.pg_dst[j]
+        ruled = win.ruled_out | ~np.asarray(keep, dtype=bool)
+        if ruled.all():                          # nothing left: this transition's term is not
+            ruled = win.ruled_out.copy()         # taken (the prior stands, as without a window)
+        objects, destinations = win.objects, win.destinations
+        if post is not None:                     # this transition's evidence, in its stage
+            k = int(win.updates)
+            if empty or not stages:
+                objects = (objects + ((k, _group_log_lik(post, hard, obj, self.w.M)),))[-n:]
+            if not empty or not stages:
+                destinations = (destinations
+                                + ((k, _group_log_lik(post, hard, dst, self.w.K)),))[-n:]
+        lo0, ld0 = self.factors(j, np.full(self.PG, -np.log(self.PG)))   # the uniform prior
+        lo = lo0 + alpha * np.sum([v for _, v in objects], axis=0) if objects else lo0
+        ld = ld0 + alpha * np.sum([v for _, v in destinations], axis=0) if destinations else ld0
+        with np.errstate(invalid="ignore"):
+            joint = np.where(ruled, -np.inf, lo[obj] + ld[dst])
+            if not np.isfinite(joint).any():     # the window against the hands' outcomes:
+                joint = np.where(ruled, -np.inf, lo0[obj] + ld0[dst])     # those alone
+        lo_f, ld_f = self.factors(j, normalize_log(joint))
+        return (self.product(j, lo_f, ld_f),
+                EvidenceWindow(ruled, objects, destinations, int(win.updates) + 1))
+
+    def _window_record(self, j: int, win: EvidenceWindow) -> dict:
+        """The window after an update, for the record (``Config.belief_window``,
+        ``Config.belief_detail``): its length, what is ruled out, and each stage's buffer --
+        the update (transition) each likelihood is of, and the likelihood by object or by
+        destination (log, up to a constant)."""
+        return dict(n=int(self.cfg.belief_window), updates=int(win.updates),
+                    ruled_out=win.ruled_out.copy(),
+                    objects=[dict(update=int(k), log_lik=v.copy()) for k, v in win.objects],
+                    destinations=[dict(update=int(k), log_lik=v.copy())
+                                  for k, v in win.destinations])
+
     def staged_log_likelihood(self, j: int, log_phys: np.ndarray, log_lik: np.ndarray,
                               empty: bool) -> np.ndarray:
         """``Config.belief_stages``: ``log_lik`` (PG,) of the physical hypotheses with, while
@@ -1607,6 +1708,8 @@ class SocialMDP:
             detail.update(reader=1 - j, about=j, action=int(actions[j]),
                           prior=self._belief_record(j, old))
         if w.busy[st[2], j]:
+            if new.window is not None:           # Config.belief_window: one more update
+                new.window = replace(new.window, updates=new.window.updates + 1)
             if rec:
                 detail.update(skipped="lifting: nothing is learnt while the partner lifts",
                               after=self._belief_record(j, new))
@@ -1670,7 +1773,10 @@ class SocialMDP:
         explained = np.isfinite(post).any()
         if not explained:                        # nothing explains the action: the prior,
             post = hard                                       # less what the hands ruled out
-        if np.isfinite(post).any():
+        if old.window is not None:               # Config.belief_window: afresh, from the window
+            new.log_phys, new.window = self.windowed_posterior(
+                j, old.window, post if explained else None, hard, keep, empty)
+        elif np.isfinite(post).any():
             new.log_phys = (self.factored_posterior(j, post, hard, empty, alpha) if factored
                             else self._renormalize_stage(j, post, prior, empty))
         # the physical prior over the goals the transition term keeps (T(s^t | s^{t-1}, a)
@@ -1686,7 +1792,9 @@ class SocialMDP:
                           **({} if factored else dict(staged_log_lik=lik.copy())),
                           mix_log_lik=mix.copy(),                   # ... with the idle mode
                           transition_term=keep.copy(), explained=bool(explained),
-                          kept=np.exp(kept), posterior=self._phys_record(j, new.log_phys))
+                          kept=np.exp(kept), posterior=self._phys_record(j, new.log_phys),
+                          **({} if new.window is None
+                             else dict(window=self._window_record(j, new.window))))
         # ---- the idle mode ---------------------------------------------------------------------
         if cfg.idle_hypothesis:
             if explained:

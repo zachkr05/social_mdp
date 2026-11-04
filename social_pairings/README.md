@@ -2180,6 +2180,42 @@ lapse acts on the policy at $\tau_{inf}$.
   reads G5 0.63 / G1 0.12 (Bayes: 0.97 / 0.015) -- far less sure of the wrong goal, still
   not on the right one before the move that tells them apart.
 
+## A window on the evidence (option, since 2026-11-04)
+
+The user: "Lets add a replay buffer such that the posterior only factors in the past 5 steps.
+I.e for object we only factor in the past 5 steps that have had no object in hands and for
+goal we only factor in past 5 steps where the object was held by the other agent. Make this
+toggleable." `Config.belief_window` $n$ (`--belief-window N`, `WINDOW=N`; 0 by default, the
+whole past): with the two posteriors apart (`belief_factored`, the default), each is built
+afresh at every transition from the uniform prior and the likelihoods of the last $n$
+transitions of its own stage only,
+
+$$b_O(o) \propto \prod_{t \in W_O} \ell_t(o)^{\alpha}, \qquad
+b_D(d) \propto \prod_{t \in W_D} \ell_t(d)^{\alpha},$$
+
+$W_O$ the last $n$ transitions with the partner's hands empty, $W_D$ the last $n$ with an
+object in them, $\ell_t$ the learning factor's likelihood as the update computed it then
+(the other factor averaged out under the belief of then, Eq. 6 averaged over the social
+posterior of then, after the idle mode's mix; `models.EvidenceWindow` keeps the two buffers),
+$\alpha$ = `likelihood_power`. What the hands' outcomes ruled out (Eq. 5's transition term:
+a set-down of its own object that did nothing, a finished goal, a hand-over taken or not)
+stays out for good -- of the product, whose marginals are the two posteriors, as everywhere
+under `belief_factored`. The goal hazard mixes the windowed posterior toward the uniform once
+per transition, a floor of $h/|\text{support}|$; it is not compounded, since the posterior
+is built afresh each time. The social posterior and the idle mode keep the whole past. With
+$n$ at least the number of transitions, no hazard and nothing ruled out, it is the update
+without a window, transition by transition (`test_beliefs.Window`). Not with one joint
+posterior (`--joint-posterior`) or a hand hazard (`Config` raises). The record's
+`belief_update` holds the window after each update (`window`: its entries, the transition of
+each, what is ruled out); `tools/belief_step.py` prints it. Folders `..._window<N>`.
+
+What it can and cannot do, on the hall_crossing testbed run (hinder / cooperation, tau 0.1,
+hazard 0.02, one joint posterior): the gift at G3 (transition 43) that put G5 on top leaves a
+window of 5 at transition 48; transitions 44-48 themselves (a step west, then north toward
+the hinderer, 1.8 x 1 x 1 x 0.58 x 0.088 for G1 against G5) still make G1 / G5 about 1 / 11
+at step 49 instead of 1 / 127 -- G5 still ahead until the move that tells them apart (51). A
+window forgets old evidence; it does not soften the likelihood of the step in it.
+
 ## The belief update's workings in the record (since 2026-11-04)
 
 The user: "just have it put all diagnostics into the json file. All information for belief
@@ -4106,6 +4142,7 @@ every mix of levels ("Results").
 | `inference_temperature` | `None` | the likelihood of Eqs. 5-6 at a tau of its own, $T \times c(\text{move})$: the hypothesis models' softmax at it, $\psi^\eta$ renormalised, $\eta = \tau/\tau_{inf}$; the robots still plan at Eq. 7's tau. `None`: Eq. 7's tau, Eqs. 5-6 as printed ("A softer likelihood"; an option since 2026-11-04; a device of before 2026-10-30, 0.5 there). Folders `..._inftau<T>` |
 | `belief_lapse` | `0` | a lapse in the likelihood: each model's policy read as $(1-\varepsilon)\psi + \varepsilon/|A|$, so that one step moves no hypothesis by more than about $|A|/\varepsilon$ ("A softer likelihood"; an option since 2026-11-04; a device of before 2026-10-30, 0.05 there). Folders `..._lapse<E>` |
 | `likelihood_power` | `1` | a tempered update: each posterior about the partner multiplied by its likelihood ^ $\alpha$ (the learning factor's, after the idle mode's mix; Eq. 5's), every observation counting $\alpha$ of itself ("A softer likelihood"; since 2026-11-04). 1: Bayes' rule. Folders `..._lpow<ALPHA>` |
+| `belief_window` | `0` | a window on the evidence: each of the two physical posteriors from the uniform prior and the likelihoods of the last $n$ transitions of its own stage only -- the object's with the partner's hands empty, the destination's holding an object; what the hands' outcomes ruled out stays out; the goal hazard a floor ("A window on the evidence"; since 2026-11-04). 0: the whole past, Bayes' rule. Needs `belief_factored`, no `hand_hazard`. Folders `..._window<N>` |
 | `belief_detail` | `True` | every step's belief update in the record, trace `belief_update`: every hypothesis model's Q and what it made of the action, Eqs. 5-6's likelihoods per hypothesis, destination and object, the beliefs before and after ("The belief update's workings in the record"; since 2026-11-04; `tools/belief_step.py` prints a step). Not part of the model: `--resume` keeps a record made without it. `False` (`--no-belief-detail`, `NODETAIL=1`): the record of before |
 | `partner_delivers`, `partner_parks`, `partner_observed`, `social_belief`, `child_conditioning` | `False`, `False`, `"action"`, `"marginals"`, `False` | the devices of before 2026-10-30, gone: the carry and park tables, the "outcome" observation, the joint posterior, the conditioning of the partner's estimate on the robot's action inside $\tilde R_j$. Kept only so that the records of before can be read; `Config` raises on any other value (`BELIEF_DEVICES`). (The lapse and the belief temperature of then are options again: above) |
 | `exchange_share` | `0.25` | $n$ of the exchange row |

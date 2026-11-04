@@ -110,6 +110,21 @@ softmax at $\tau_{inf}$ for the belief update only (the robots plan and act at E
 `LAPSE` (`--lapse`, `Config.belief_lapse`): $(1-\varepsilon)\psi + \varepsilon/|A|$. Not run on
 the testbed yet; tested on the tiny scene against the reference update (`test_beliefs.py`).
 
+## A window on the evidence: `WINDOW` (option, 2026-11-04)
+
+The user: "Lets add a replay buffer such that the posterior only factors in the past 5 steps
+... Make this toggleable." Each posterior about the partner from the last N transitions of
+its own stage only -- the object's from those with the partner's hands empty, the
+destination's from those with an object in them (README, "A window on the evidence"):
+
+    WINDOW=5 HAZARD=0.02 sh run_testbed.sh       # folders ..._objgoal_window5_hazard0.02
+    WINDOW=5 INFTAU=0.5 HAZARD=0.02 sh run_testbed.sh   # ... with the softer likelihood
+
+`WINDOW` (`--belief-window`, `Config.belief_window`, 0 = the whole past): what the hands
+ruled out stays out; the hazard mixes the windowed posterior once (a floor); the social
+posterior keeps the whole past. Needs the two posteriors apart (the default; not with
+`JOINT=1`). Tested on the tiny scene (`test_beliefs.Window`).
+
 ## The object's posterior and the destination's apart (default since 2026-11-04)
 
 Each robot's belief about its partner's physical goal is now two posteriors: one about the

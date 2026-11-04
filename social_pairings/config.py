@@ -88,6 +88,7 @@ ADDED_FIELDS = dict(
     lazy_period=5,                 # 2026-11-04
     belief_detail=False,           # 2026-11-04 (no record of the belief update's workings)
     likelihood_power=1.0,          # 2026-11-04 (Bayes' rule)
+    belief_window=0,               # 2026-11-04 (every transition of the past counts)
 )
 
 
@@ -526,6 +527,28 @@ class Config:
     # power alpha exactly.  1 (the default): Bayes' rule, Eqs. 5-6 as printed.  The hazards
     # stay the prediction step between updates.  Folders ..._lpow<alpha>.
     likelihood_power: float = 1.0
+    # A window on the evidence (2026-11-04; the user: "Lets add a replay buffer such that the
+    # posterior only factors in the past 5 steps. I.e for object we only factor in the past 5
+    # steps that have had no object in hands and for goal we only factor in past 5 steps
+    # where the object was held by the other agent. Make this toggleable").  n >= 1: each of
+    # the two physical posteriors is the uniform prior times the likelihoods of the last n
+    # transitions of its own stage, and of no other --
+    #     b_O(o) proportional to prod_{t in W_O} l_t(o)^alpha,  W_O: the last n transitions
+    #                                                           with the partner's hands empty,
+    #     b_D(d) proportional to prod_{t in W_D} l_t(d)^alpha,  W_D: the last n with an object
+    #                                                           in its hands,
+    # each l_t the learning factor's likelihood as it was computed at its transition (the
+    # other factor averaged out under the belief of then, Eq. 6 averaged over the social
+    # posterior of then), kept in a buffer of n per stage; the transition before those no
+    # longer counts.  What the hands' outcomes ruled out (Eq. 5's transition term: a
+    # set-down of its own object that did nothing, a finished goal, a hand-over) stays ruled
+    # out: that is not evidence for a window to forget.  The goal hazard (goal_hazard) mixes
+    # the windowed posterior toward the uniform once per transition -- a floor; it is not
+    # compounded, since each transition the posterior is built afresh from the window.  The
+    # social posterior and the idle mode keep the whole past.  0 (the default): the whole
+    # past, Bayes' rule.  Needs the two posteriors apart (belief_factored, the default) and no
+    # hand hazard (a window forgets by itself).  Folders ..._window<n>.
+    belief_window: int = 0
     # Everything the belief update computes, in the record (2026-11-04; the user: "just have
     # it put all diagnostics into the json file. All information for belief calculation
     # should be in the JSOn", and "Lets also add these to logs: Q_{d,xi}(s_t, a_t),
@@ -710,6 +733,10 @@ class Config:
                 or not isinstance(self.likelihood_power, (int, float, np.integer, np.floating))
                 or not 0.0 < self.likelihood_power <= 1.0):
             raise ValueError("likelihood_power must be a number in (0, 1]")
+        if (isinstance(self.belief_window, (bool, np.bool_))
+                or not isinstance(self.belief_window, (int, np.integer))
+                or self.belief_window < 0):
+            raise ValueError("belief_window must be an int >= 0 (0: the whole past)")
         for name in ("park_eps", "idle_eps"):
             if not 0.0 <= getattr(self, name) < 1.0:
                 raise ValueError(f"{name} must lie in [0, 1)")
@@ -724,6 +751,12 @@ class Config:
                     or not 0.0 <= float(value) <= 1.0):
                 raise ValueError(f"{name} must be a number in [0, 1] (the probability that "
                                  f"the partner's goal is redrawn)")
+        if self.belief_window > 0 and not self.belief_factored:
+            raise ValueError("belief_window needs the two posteriors apart "
+                             "(belief_factored=True, the default)")
+        if self.belief_window > 0 and self.hand_hazard > 0.0:
+            raise ValueError("belief_window with hand_hazard: a window forgets by itself "
+                             "(set hand_hazard=0)")
         if not 0.0 <= self.pi_forcing < 1.0:
             raise ValueError("pi_forcing must lie in [0, 1)")
         if (isinstance(self.lazy_mass, (bool, np.bool_))

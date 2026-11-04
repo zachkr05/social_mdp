@@ -67,6 +67,8 @@ def read(folders) -> list:
         lapse = float((summary.get("options") or {}).get("belief_lapse", 0.0))
         inftau = (summary.get("options") or {}).get("inference_temperature")
         lpow = float((summary.get("options") or {}).get("likelihood_power", 1.0))
+        # a window on the evidence (since 2026-11-04; a folder of before: the whole past)
+        window = int((summary.get("options") or {}).get("belief_window", 0))
         for r in summary["rows"]:
             if r.get("objects", "inferred") != "inferred":
                 continue
@@ -76,14 +78,15 @@ def read(folders) -> list:
                              goal_1=bool(own[0]), goal_2=bool(own[1]), steps=r["steps"],
                              stopped_by=r["stopped_by"], scene=scene, conflict=reading,
                              hazards=hazards, lapse=lapse, inftau=inftau, lpow=lpow,
-                             folder=str(folder)))
+                             window=window, folder=str(folder)))
     return rows
 
 
 def scene_of(rows) -> str:
     """The scene, and the reading of conflict where a folder was made under the task
     conflict of 2026-11-01 (Config.conflict; Table I's, the reading of before, is not
-    named), the lapse in the likelihood (2026-11-04) and the hazards of the partner's goal
+    named), the lapse in the likelihood, its temperature, the tempered update and the
+    window on the evidence (2026-11-04) and the hazards of the partner's goal
     where there are any (2026-11-02)."""
     readings = {r.get("conflict", "table") for r in rows}
     name = rows[0]["scene"]
@@ -105,6 +108,11 @@ def scene_of(rows) -> str:
         name += ", likelihood powers mixed"
     elif powers != {1.0}:
         name += f", likelihood ^{powers.pop():g}"
+    windows = {int(r.get("window") or 0) for r in rows}
+    if len(windows) > 1:
+        name += ", windows mixed"
+    elif windows != {0}:
+        name += f", window {windows.pop()}"
     hazards = {tuple(r.get("hazards") or (0.0, 0.0, 0.0)) for r in rows}
     if len(hazards) > 1:
         name += ", hazards mixed"

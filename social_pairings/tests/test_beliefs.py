@@ -23,8 +23,9 @@ import numpy as np
 from social_pairings import Config
 from social_pairings.config import BELIEF_DEVICES, TOLD
 from social_pairings.constants import GIVE, HELD0, HELD1, HOME, PICK, PLACE, WAIT
+from social_pairings.models import SocialMDP
 from social_pairings.rollout import rollout
-from social_pairings.util import log_softmax
+from social_pairings.util import log_softmax, normalize_log
 
 from .reference import make_world
 from .test_models import TINY, solved, tight_explicit, tight_now
@@ -906,6 +907,226 @@ class LikelihoodPower(unittest.TestCase):
                                                atol=1e-8)
                     n += 1
         self.assertGreater(n, 6)
+
+
+def roll_by_hand(w, gid, goals, weights, cfgs, n_steps=6, follow=0):
+    """Engines of the tiny scene, one per Config of ``cfgs``, rolled out by hand from the
+    start with the choices of engine ``follow`` -> per transition, (the transition term kept
+    everything, [(phys, social, idle) about robot j for j in (0, 1)] per engine)."""
+    mdps = []
+    for cfg in cfgs:
+        mdp = SocialMDP(w, gid, (2, 2), goals, weights, cfg, 2)
+        mdp.allocate()
+        mdp.solve_level0()
+        mdps.append(mdp)
+    state = w.initial
+    out = []
+    for t in range(n_steps):
+        for mdp in mdps:
+            mdp.plan(state)
+            if t == 0:
+                mdp.init_models()
+            for depth in (1, 2):
+                mdp.inputs(depth)
+                mdp.solve(depth)
+        s = w.sid(state)
+        lead = mdps[follow]
+        actions = tuple(int(np.argmax(lead.q_values(lead.root[i], s, i))) for i in (0, 1))
+        nxt = w.unsid(w.step(s, actions))
+        status = tuple(int(x) for x in w.status[state[2]])
+        done = tuple(int(x) for x in w.done[state[2]])
+        new_status, new_done, failed, handed, _ = w.real_step(status, done, state, nxt,
+                                                              actions, detail=True)
+        event = dict(done_now=tuple(bool(new_done[i]) and not done[i] for i in (0, 1)),
+                     failed=failed, handed_in_vain=handed,
+                     held=tuple(int(w.hold[state[2], i]) for i in (0, 1)))
+        quiet = all(lead.transition_term(j, s, actions, nxt, event).all() for j in (0, 1))
+        for mdp in mdps:
+            mdp.observe(actions, s, nxt, event)
+        out.append((quiet, [[(m.about[j].phys(), m.about[j].social(), m.about[j].idle)
+                             for j in (0, 1)] for m in mdps]))
+        state = nxt
+    return out, mdps
+
+
+class Window(unittest.TestCase):
+    """A window on the evidence (``Config.belief_window``, 2026-11-04; the user: "Lets add a
+    replay buffer such that the posterior only factors in the past 5 steps. I.e for object we
+    only factor in the past 5 steps that have had no object in hands and for goal we only
+    factor in past 5 steps where the object was held by the other agent. Make this
+    toggleable"): the option; a window longer than the past is Bayes' rule; each posterior
+    from the last n transitions of its own stage only, each likelihood the one the update
+    without a window multiplies in; what the hands' outcomes ruled out stays out; the
+    record."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.w, cls.gid, mdp, cls.start, _ = solved(TINY, tight_explicit(), (2, 2),
+                                                   ("cooperation", "competition"), (1.0, 1.0),
+                                                   seed=21)
+        cls.goals, cls.weights = mdp.goals, mdp.weights
+
+    def engine(self, **options):
+        """A fresh engine of the tiny scene with its models solved at the start, the beliefs
+        the uniform priors of t = 0."""
+        cfg = tight_explicit(**options)
+        mdp = SocialMDP(self.w, self.gid, (2, 2), self.goals, self.weights, cfg, 2)
+        mdp.allocate()
+        mdp.solve_level0()
+        mdp.plan(self.start)
+        mdp.init_models()
+        for depth in (1, 2):
+            mdp.inputs(depth)
+            mdp.solve(depth)
+        return mdp
+
+    def holding(self):
+        w = self.w
+        return (int(w.cell_id[(1, 1)]), int(w.cell_id[(2, 1)]), w.block_of([HOME, HELD1], [0, 0]))
+
+    def moves(self, mdp, state, j=1, n=3):
+        """(WAIT, a) for the first n of robot j's open actions among the moves and "stay" --
+        an action no model allows teaches nothing, so adds nothing to a window."""
+        q = mdp.q_values(mdp.root[j], self.w.sid(state), j)
+        return [(WAIT, a) for a in range(5) if np.isfinite(q[a])][:n]
+
+    def update(self, mdp, state, actions, j=1):
+        w = self.w
+        s = w.sid(state)
+        nxt = w.unsid(w.step(s, actions))
+        mdp.about[j] = mdp.updated_belief(j, s, actions, nxt, event_at(w, state))
+        return mdp.about[j]
+
+    def test_the_option(self):
+        self.assertEqual(Config().belief_window, 0)              # the whole past by default
+        Config(belief_window=5)
+        Config(belief_window=1, goal_hazard=0.02)
+        for bad in (-1, True, 2.5, "5", None):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                Config(belief_window=bad)
+        with self.assertRaises(ValueError):                      # two posteriors apart only
+            Config(belief_window=5, belief_factored=False)
+        with self.assertRaises(ValueError):                      # a window forgets by itself
+            Config(belief_window=5, hand_hazard=0.1)
+        mdp = self.engine(belief_window=3)
+        for j in (0, 1):
+            win = mdp.about[j].window
+            self.assertEqual((win.objects, win.destinations, win.updates), ((), (), 0))
+            self.assertFalse(win.ruled_out.any())
+        self.assertIsNone(self.engine().about[0].window)
+
+    def test_a_window_longer_than_the_past_is_bayes(self):
+        """n at least the number of transitions, no hazard, nothing ruled out: every
+        posterior of every transition is that of the update without a window."""
+        cfgs = [tight_explicit(), tight_explicit(belief_window=1000),
+                tight_explicit(likelihood_power=0.5), tight_explicit(belief_window=1000,
+                                                                     likelihood_power=0.5)]
+        out, _ = roll_by_hand(self.w, self.gid, self.goals, self.weights, cfgs)
+        compared = 0
+        for quiet, beliefs in out:
+            if not quiet:                # a hand's outcome ruled something out: stop here
+                break
+            for a, b in ((0, 1), (2, 3)):
+                for j in (0, 1):
+                    np.testing.assert_allclose(beliefs[b][j][0], beliefs[a][j][0], atol=1e-10)
+                    np.testing.assert_allclose(beliefs[b][j][1], beliefs[a][j][1], atol=1e-10)
+                    self.assertAlmostEqual(beliefs[b][j][2], beliefs[a][j][2], places=10)
+            compared += 1
+        self.assertGreaterEqual(compared, 3)
+
+    def test_each_posterior_from_the_last_n_of_its_stage(self):
+        n = 2
+        mdp = self.engine(belief_window=n)
+        moves = self.moves(mdp, self.start, n=4)
+        self.assertEqual(len(moves), 4)
+        for k, actions in enumerate(moves):                     # hands empty: the object's
+            b = self.update(mdp, self.start, actions)
+            win = b.window
+            self.assertEqual([u for u, _ in win.objects], list(range(max(0, k + 1 - n), k + 1)))
+            self.assertEqual(win.destinations, ())
+            lo0, ld0 = mdp.factors(1, np.full(mdp.PG, -np.log(mdp.PG)))
+            lo, ld = mdp.factors(1, b.log_phys)
+            want = normalize_log(lo0 + sum(v for _, v in win.objects))
+            np.testing.assert_allclose(np.exp(lo), np.exp(want), atol=1e-12)
+            np.testing.assert_allclose(np.exp(ld), np.exp(ld0), atol=1e-12)   # untouched
+        lo_before = mdp.factors(1, b.log_phys)[0]
+        held = self.moves(mdp, self.holding())
+        self.assertEqual(len(held), 3)
+        for actions in held:                                    # holding: the destination's
+            b = self.update(mdp, self.holding(), actions)
+        self.assertEqual(len(b.window.objects), n)
+        self.assertEqual([u for u, _ in b.window.destinations], [5, 6])
+        lo, ld = mdp.factors(1, b.log_phys)
+        np.testing.assert_allclose(np.exp(lo), np.exp(lo_before), atol=1e-12)
+        want = normalize_log(ld0 + sum(v for _, v in b.window.destinations))
+        np.testing.assert_allclose(np.exp(ld), np.exp(want), atol=1e-12)
+
+    def test_each_likelihood_is_the_one_bayes_multiplies_in(self):
+        """From the same belief, after the same action: the window's new entry is the
+        learning factor's posterior over its prior in the update without a window."""
+        windowed, plain = self.engine(belief_window=4), self.engine()
+        for state, stage in ((self.start, "objects"), (self.holding(), "destinations")):
+            for actions in self.moves(plain, state):
+                for mdp in (windowed, plain):
+                    mdp.about[1] = mdp._initial_belief(1)
+                b = self.update(windowed, state, actions)
+                p = self.update(plain, state, actions)
+                f = 0 if stage == "objects" else 1
+                got = getattr(b.window, stage)[-1][1]
+                want = (mdp.factors(1, p.log_phys)[f]
+                        - mdp.factors(1, np.full(mdp.PG, -np.log(mdp.PG)))[f])
+                sel = np.isfinite(want)
+                np.testing.assert_allclose(got[sel] - got[sel].max(), want[sel] - want[sel].max(),
+                                           atol=1e-10)
+
+    def test_what_the_hands_ruled_out_stays_out(self):
+        """Its object known (one object per hypothesis), a set-down of it that did nothing
+        rules a destination out exactly -- still out once the window has passed it."""
+        mdp = self.engine(belief_window=1, partner_object="known")
+        w = mdp.w
+        other = [k for k in range(w.K) if int(w.dest[k]) != int(w.true_dest[1])
+                 and int(w.dest[k]) != int(w.cell_id[(0, 2)])]
+        if not other:
+            self.skipTest("no second candidate on this map")
+        cell = int(w.dest[other[0]])
+        state = (int(w.cell_id[(0, 2)]), cell, w.block_of([HOME, HELD1], [0, 0]))
+        b = self.update(mdp, state, (WAIT, PLACE))
+        out = w.dest[mdp.pg_dst[1]] == cell
+        self.assertTrue(b.window.ruled_out[out].all())
+        self.assertEqual(float(b.phys()[out].sum()), 0.0)
+        for actions in self.moves(mdp, self.holding()):
+            b = self.update(mdp, self.holding(), actions)
+        self.assertEqual(len(b.window.destinations), 1)
+        self.assertTrue(b.window.ruled_out[out].all())
+        self.assertEqual(float(b.phys()[out].sum()), 0.0)
+
+    def test_the_hazard_is_a_floor(self):
+        """The goal hazard mixes the windowed posterior toward the uniform once: built
+        afresh each transition, it is not compounded."""
+        h, n = 0.1, 2
+        mdp = self.engine(belief_window=n, goal_hazard=h)
+        for actions in self.moves(mdp, self.start, n=4):
+            b = self.update(mdp, self.start, actions)
+            lo0 = mdp.factors(1, np.full(mdp.PG, -np.log(mdp.PG)))[0]
+            fresh = normalize_log(lo0 + sum(v for _, v in b.window.objects))
+            sup = np.isfinite(fresh)
+            want = (1.0 - h) * np.exp(fresh) + h * sup / sup.sum()
+            np.testing.assert_allclose(np.exp(mdp.factors(1, b.log_phys)[0]), want, atol=1e-12)
+
+    def test_the_record(self):
+        mdp = self.engine(belief_window=2)
+        w = self.w
+        for actions in self.moves(mdp, self.start):
+            s = w.sid(self.start)
+            nxt = w.unsid(w.step(s, actions))
+            detail = {}
+            mdp.about[1] = mdp.updated_belief(1, s, actions, nxt, event_at(w, self.start),
+                                              detail)
+        win = detail["window"]
+        self.assertEqual(win["n"], 2)
+        self.assertEqual([e["update"] for e in win["objects"]], [1, 2])
+        self.assertEqual(win["destinations"], [])
+        self.assertEqual(win["ruled_out"].shape, (mdp.PG,))
 
 
 class Rollout(unittest.TestCase):

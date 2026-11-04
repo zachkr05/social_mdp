@@ -71,7 +71,9 @@ partner's goal may change, Baker, Saxe & Tenenbaum 2009's model M2) to ``..._haz
 move's cost, and a lapse in it, each hypothesis model's policy read as
 ``(1 - E) psi + E / |A|``) to ``..._inftau<T>`` and ``..._lapse<E>``, and
 ``--likelihood-power ALPHA`` (a tempered update, each posterior times its likelihood ^ ALPHA)
-to ``..._lpow<ALPHA>``, before the hazards:
+to ``..._lpow<ALPHA>``, and ``--belief-window N`` (each posterior from the last N transitions
+of its own stage only: the object's from those with the partner's hands empty, the
+destination's from those with an object in them) to ``..._window<N>``, before the hazards:
 per rollout ``<pairing>__<objects>.json`` and ``.mp4`` (an MP4 video); ``summary.json``;
 ``results.md``
 (the finishes; what each robot ended up believing of its partner's object, destination and
@@ -522,6 +524,15 @@ def main() -> None:
                              "P(a | o, d) holding an object), every observation counting ALPHA "
                              "of itself; the goal-switch hazard stays the prediction step.  "
                              "Default 1: Bayes' rule (folders ..._lpow<ALPHA>)")
+    parser.add_argument("--belief-window", type=int, default=0, metavar="N",
+                        help="Config.belief_window (since 2026-11-04): a window on the evidence "
+                             "-- the posterior about the partner's object from the likelihoods of "
+                             "the last N transitions with its hands empty only, the one about "
+                             "its destination from the last N with an object in its hands only "
+                             "(the uniform prior times those; what the hands' outcomes ruled out "
+                             "stays out; the goal hazard, where set, mixes the result toward the "
+                             "uniform once).  Needs the two posteriors apart (the default).  "
+                             "Default 0: the whole past, Bayes' rule (folders ..._window<N>)")
     parser.add_argument("--no-belief-detail", action="store_true",
                         help="Config.belief_detail=False: leave the belief update's workings out "
                              "of the record (by default every step's \"belief_update\" holds them "
@@ -605,6 +616,13 @@ def main() -> None:
         parser.error("--likelihood-power takes a number in (0, 1]")
     if lpow != 1.0:
         options = dict(options, likelihood_power=lpow)
+    # a window on the evidence (2026-11-04): 0 (the whole past) is the default and the folders
+    # of before
+    window = int(args.belief_window)
+    if window < 0:
+        parser.error("--belief-window takes an int >= 0 (0: the whole past)")
+    if window > 0:
+        options = dict(options, belief_window=window)
     # lazy hypotheses (2026-11-04): an approximation of the solve, so it names its folder
     if args.lazy > 0.0:
         options = dict(options, lazy_mass=args.lazy, lazy_period=args.lazy_period)
@@ -648,6 +666,7 @@ def main() -> None:
            + ("" if inftau is None else f"_inftau{inftau:g}")
            + ("" if args.lapse <= 0.0 else f"_lapse{args.lapse:g}")
            + ("" if lpow == 1.0 else f"_lpow{lpow:g}")
+           + ("" if window <= 0 else f"_window{window}")
            + "".join(f"_{flag}{value:g}" for _, flag, value in hazards)
            + ("" if args.lazy <= 0.0 else f"_lazy{args.lazy:g}"))
     #        (... with the physical posterior on the level-0 policies, the authors' code; the
@@ -719,6 +738,7 @@ def main() -> None:
                                     + ("" if inftau is None else f"     inference tau {inftau:g}")
                                     + ("" if args.lapse <= 0.0 else f"     lapse {args.lapse:g}")
                                     + ("" if lpow == 1.0 else f"     likelihood ^{lpow:g}")
+                                    + ("" if window <= 0 else f"     window {window}")
                                     + "".join(f"     {HAZARD_LABELS[key]} {value:g}"
                                               for key, _, value in hazards)
                                     + ("" if args.lazy <= 0.0 else f"     lazy {args.lazy:g}"))
@@ -753,6 +773,10 @@ def main() -> None:
                 f"plan at Eq. 7's)")
              + ("" if lpow == 1.0 else
                 f", a tempered update: each posterior multiplied by its likelihood ^ {lpow:g}")
+             + ("" if window <= 0 else
+                f", a window on the evidence: each posterior from the last {window} transitions "
+                f"of its own stage (the object's with the partner's hands empty, the "
+                f"destination's holding)")
              + ("" if args.lapse <= 0.0 else
                 f", a lapse in the likelihood: the partner read as acting at random with "
                 f"probability {args.lapse:g}, (1 - {args.lapse:g}) psi + {args.lapse:g} / |A|")
