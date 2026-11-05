@@ -14,6 +14,7 @@ import numpy as np
 
 from . import goals as G
 from .config import Config, SolverFailure
+from .feint import DecoyFeint
 from .constants import (ACTION_NAMES, CARRYING, DONE, GONE, HELD0, HELD1, HOME, MOVE_OF, MOVES,
                         N_ACTIONS, NO_WAY, PICK, STAGE_NAMES, STALL_WARNING, TO_OBJECT,
                         WAIT)
@@ -102,6 +103,8 @@ class _Run:
         self.own_goal = tuple(bool(x) for x in own_goal)
         # what would undo each robot's last action (Config.inertia); nothing before the first
         self.undo: tuple = (None, None)
+        # the decoy option of a robot that feints (Config.decoy_feint; feint.py)
+        self.feint: Optional[DecoyFeint] = None
         self.state = w.initial                               # (x0, x1, block)
         self.status = [int(v) for v in w.status[w.block0]]   # real object statuses
         self.done = [int(v) for v in w.done[w.block0]]
@@ -357,6 +360,8 @@ def _transition(mdp: SocialMDP, run: _Run, t: int, n_steps: int, uniforms: np.nd
     else:
         chosen = [choose_with_inertia(q[i], undo[i], margin) for i in (0, 1)]
         act = tuple(int(a) for a, _ in chosen)
+        if run.feint is not None:            # a decoy feint, where it beats the plan (feint.py)
+            act = run.feint.decide(mdp, t, state, run.status, run.where, act, q)
         held_back = tuple(bool(kept) for _, kept in chosen)
         policy = tuple(np.eye(N_ACTIONS)[a] for a in act)
 
@@ -621,6 +626,8 @@ def rollout(world: ObjectWorld, goal_ids: Sequence[int], solo_steps: Sequence[in
     mdp = SocialMDP(w, goal_ids, levels, social_goals, weights, cfg, threads)
     uniforms = np.random.default_rng(cfg.seed).random((n_steps, 2))
     run = _Run(w, solo_steps, scenery, own_goal=tuple(not x for x in mdp.spoiler))
+    if cfg.decoy_feint:
+        run.feint = DecoyFeint(mdp, (w, goal_ids, levels, social_goals, weights, cfg, threads))
     if cfg.verbose:
         for line in _describe(mdp, run, n_steps):
             print(f"[pairings] {line}", flush=True)
@@ -713,6 +720,7 @@ def _result(mdp: SocialMDP, run: _Run, info0: dict, cfg: Config) -> dict:
         done_at=tuple(led["done_at"] for led in run.ledger),
         ledger=run.ledger, trace=run.trace, events=run.events, deadlock=run.deadlock,
         max_stall=run.max_stall,
+        **({} if run.feint is None else dict(feint=run.feint.record())),
         stage=tuple(STAGE_NAMES[_stage(w, state, i)] for i in (0, 1)),
         status=run.all_status(run.status), holds=holds_of(run.status),
         object_cells=run.all_cells(w.object_cells(run.status, state, run.where)),

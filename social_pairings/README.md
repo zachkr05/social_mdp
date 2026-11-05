@@ -2286,6 +2286,66 @@ was ruled out). Learning the social goal from the subgoals alone (not built) was
 dodging read as keepaway, G4 0.985. Not run closed-loop yet; the subgoal settings are first
 choices.
 
+## A decoy feint (option, since 2026-11-04)
+
+The user, of hinder / coercion on the two-room scene (the hinderer takes the coercer's object
+at transition 20 and keeps it to the 60-step cap, the coercer's four takes all missing): "How
+can we alter the reward function such that the coercive agent will go pick up the green object
+to manipulate the green agent into thinking it actually wants the green object"; then, of the
+decoy-and-transfer document that answered it (ChatGPT, the same evening), "Ok how about u
+actually just implement it the rerun the scenario then show me the mp4 again".
+
+Why the coercer never feints: its reward is not the obstacle. Against a hinderer (read as a
+conflict partner, Table I's column $l > 1$) coercion's term is $w(-R_j + r(g_i))$ with the
+goal-less hinderer's $R_j = -w\,\tilde r(g_i)$, so $R_i = (1+w)\,r(g_i) + w^2\,\tilde
+r(g_i) - c(a_i)$: all of it its own delivery, which a working feint would pay for. But a
+level-2 robot predicts its partner by the partner's level-1 models with the partner's belief
+held fixed for the whole plan (Eq. 4), so in its plan nothing it does moves what the partner
+believes, and a lure is worth only its cost. The document's remedy is to plan over the
+partner's belief updates (its Sections 3 and 6; the I-POMDP principle, Gmytrasiewicz & Doshi
+2005).
+
+`Config.decoy_feint=True` (`--decoy-feint`, `FEINT=1`; `feint.py`) does that in the
+document's finite-lookahead form, for one option -- the decoy:
+
+- **when**: a level-2 robot whose social goal is one of `feint_goals` (default coercion),
+  its object inferred by its partner, its hands empty, its partner holding the robot's own
+  object, and another object lying free; not within `feint_cooldown` (10) transitions of its
+  last option;
+- **the look-ahead**: walking to the decoy by a shortest path round the partner and lifting
+  it, the partner doing meanwhile the most likely action of the robot's prediction of it, and
+  every step fed to the partner's **own** belief update (`SocialMDP.updated_belief`: the
+  cut, the stages, the hazards, the window, as configured) -- "the planner must calculate
+  $p_{t+1}$ through this filter";
+- **the option's end**: the robot's level-2 value there with the partner's belief as that
+  update leaves it, every model solved afresh at that belief in a second `SocialMDP` (twice
+  the memory of a rollout); where the partner's belief in the decoy moves by less than
+  `feint_min_shift` (0.01), the plan's own value there instead (no second solve);
+- **the choice**: the option's discounted return (its steps' expected rewards, then the
+  end's value) against $\max_a Q(s, a)$ of the plan as it is; taken where it wins by more
+  than `feint_margin` (0), then followed until the decoy is in the robot's hands (or the
+  partner lets go of the object, the decoy is taken, or it runs too long); from there the
+  planner as before, with the partner's belief as its own update made it.
+
+No reward is added (the document's $\kappa = 0$: the decoy has to earn its value through
+the real task). Left out: the partner's belief moving again after the option (the plan's
+frozen belief from there) and its reaction, during the walk, to its own changing belief. The
+record holds `feint`: every evaluation (the partner's belief in the decoy now and at the
+option's end, the option's value and the plan's, the gain, the looked-ahead steps) and when
+an option began and ended. Tests: `tests/test_feint.py` (the path, the look-ahead restoring
+the beliefs, the end re-solved, the second model's value equal to the first's at the same
+belief).
+
+What it found on the two-room scene (2026-11-04, tau 0.2, the cut; a scratch run with the
+coercer made to feint at transition 21, the hinderer holding its object): the hinderer's
+odds that the coercer wants its own object were $10^{24}$ to 1 when the feint began and
+$10^{22.4}$ when the decoy was lifted -- and its belief about the coercer's social goal went
+from coercion 0.65 to cooperation 1.00 within four steps. It read the coercer fetching the
+hinderer's own object as help, not as wanting it, kept the object, and the coercer put the
+decoy back. With these inferences the option's look-ahead sees the same and declines it: a
+feint can only work against a partner without a benign reading of the decoy and with a
+belief that can move (a goal hazard or a window).
+
 ## The belief update's workings in the record (since 2026-11-04)
 
 The user: "just have it put all diagnostics into the json file. All information for belief
@@ -4214,6 +4274,7 @@ every mix of levels ("Results").
 | `likelihood_power` | `1` | a tempered update: each posterior about the partner multiplied by its likelihood ^ $\alpha$ (the learning factor's, after the idle mode's mix; Eq. 5's), every observation counting $\alpha$ of itself ("A softer likelihood"; since 2026-11-04). 1: Bayes' rule. Folders `..._lpow<ALPHA>` |
 | `option_temperature`, `option_detour`, `option_start`, `option_switch`, `option_keepaway_end` | `0.5`, `log 2`, `0.05`, `0.02`, `0.2` | the partner's subgoals under `physical_likelihood="cut"`: their policies' temperature (x c(move)), a new subgoal's prior falling by $e^{-\lambda}$ per extra move, the probabilities per transition that a subgoal starts, is interrupted, that keeping away ends ("The partner's subgoals"; since 2026-11-04). Folders `..._optT`, `_optD`, `_optS`, `_optI` where set |
 | `belief_window` | `0` | a window on the evidence: each of the two physical posteriors from the uniform prior and the likelihoods of the last $n$ transitions of its own stage only -- the object's with the partner's hands empty, the destination's holding an object; what the hands' outcomes ruled out stays out; the goal hazard a floor ("A window on the evidence"; since 2026-11-04). 0: the whole past, Bayes' rule. Needs `belief_factored`, no `hand_hazard`. Folders `..._window<N>` |
+| `decoy_feint`, `feint_goals`, `feint_margin`, `feint_min_shift`, `feint_cooldown` | `False`, `("coercion",)`, `0.0`, `0.01`, `10` | a decoy feint: a level-2 robot of one of `feint_goals` whose partner holds its object looks ahead at lifting another object with the partner's own belief update fed each step, values the end with every model re-solved at the belief the partner would then hold, and takes the option where it beats its plan by more than `feint_margin` ("A decoy feint"; since 2026-11-04). Needs the partner's object inferred and picking by hand; twice the memory. Folders `..._feint` |
 | `belief_detail` | `True` | every step's belief update in the record, trace `belief_update`: every hypothesis model's Q and what it made of the action, Eqs. 5-6's likelihoods per hypothesis, destination and object, the beliefs before and after ("The belief update's workings in the record"; since 2026-11-04; `tools/belief_step.py` prints a step). Not part of the model: `--resume` keeps a record made without it. `False` (`--no-belief-detail`, `NODETAIL=1`): the record of before |
 | `partner_delivers`, `partner_parks`, `partner_observed`, `social_belief`, `child_conditioning` | `False`, `False`, `"action"`, `"marginals"`, `False` | the devices of before 2026-10-30, gone: the carry and park tables, the "outcome" observation, the joint posterior, the conditioning of the partner's estimate on the robot's action inside $\tilde R_j$. Kept only so that the records of before can be read; `Config` raises on any other value (`BELIEF_DEVICES`). (The lapse and the belief temperature of then are options again: above) |
 | `exchange_share` | `0.25` | $n$ of the exchange row |

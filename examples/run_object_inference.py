@@ -558,6 +558,16 @@ def main() -> None:
                              "stays out; the goal hazard, where set, mixes the result toward the "
                              "uniform once).  Needs the two posteriors apart (the default).  "
                              "Default 0: the whole past, Bayes' rule (folders ..._window<N>)")
+    parser.add_argument("--decoy-feint", action="store_true",
+                        help="Config.decoy_feint (since 2026-11-04, social_pairings/feint.py): a "
+                             "level-2 coercer whose partner holds its object looks ahead at "
+                             "lifting another object (the decoy), with the partner's own belief "
+                             "update fed each step and the end valued at the belief the partner "
+                             "would then hold, and does it where that beats its plan (folders "
+                             "..._feint; twice the memory)")
+    parser.add_argument("--feint-margin", type=float, default=None, metavar="M",
+                        help="Config.feint_margin: by how much (reward units) the decoy option "
+                             "must beat the plan (default 0; folders ..._feint<M> where set)")
     parser.add_argument("--no-belief-detail", action="store_true",
                         help="Config.belief_detail=False: leave the belief update's workings out "
                              "of the record (by default every step's \"belief_update\" holds them "
@@ -659,6 +669,15 @@ def main() -> None:
         parser.error("--belief-window takes an int >= 0 (0: the whole past)")
     if window > 0:
         options = dict(options, belief_window=window)
+    # a decoy feint (2026-11-04): off by default, the folders of before; on, ..._feint
+    if args.feint_margin is not None and not args.decoy_feint:
+        parser.error("--feint-margin goes with --decoy-feint")
+    if args.decoy_feint:
+        options = dict(options, decoy_feint=True)
+        if args.feint_margin is not None:
+            options = dict(options, feint_margin=float(args.feint_margin))
+    feint_tag = ("" if not args.decoy_feint else
+                 "_feint" + ("" if args.feint_margin is None else f"{args.feint_margin:g}"))
     # lazy hypotheses (2026-11-04): an approximation of the solve, so it names its folder
     if args.lazy > 0.0:
         options = dict(options, lazy_mass=args.lazy, lazy_period=args.lazy_period)
@@ -704,6 +723,7 @@ def main() -> None:
            + ("" if args.lapse <= 0.0 else f"_lapse{args.lapse:g}")
            + ("" if lpow == 1.0 else f"_lpow{lpow:g}")
            + ("" if window <= 0 else f"_window{window}")
+           + feint_tag           # a decoy feint (2026-11-04)
            + "".join(f"_{flag}{value:g}" for _, flag, value in hazards)
            + ("" if args.lazy <= 0.0 else f"_lazy{args.lazy:g}"))
     #        (... with the physical posterior on the level-0 policies, the authors' code; the
@@ -776,6 +796,7 @@ def main() -> None:
                                     + ("" if args.lapse <= 0.0 else f"     lapse {args.lapse:g}")
                                     + ("" if lpow == 1.0 else f"     likelihood ^{lpow:g}")
                                     + ("" if window <= 0 else f"     window {window}")
+                                    + ("" if not args.decoy_feint else "     decoy feint")
                                     + ("" if Config(**options).physical_likelihood != "cut"
                                        else "     cut (subgoals)")
                                     + "".join(f"     {HAZARD_LABELS[key]} {value:g}"

@@ -76,6 +76,10 @@
 # evidence -- the posterior about the partner's object from the last WINDOW transitions with
 # its hands empty only, the one about its destination from the last WINDOW with an object in
 # them only; what the hands' outcomes ruled out stays out; folders ..._window<N>),
+# FEINT (1: Config.decoy_feint, since 2026-11-04; a level-2 coercer whose partner holds its
+# object looks ahead at lifting the other object, the partner's own belief update fed each
+# step, and does it where that beats its plan -- social_pairings/feint.py; folders ..._feint;
+# twice the memory a rollout: give MEM accordingly),
 # LAPSE (since 2026-11-04; Config.belief_lapse, default 0: a lapse in the likelihood -- each
 # hypothesis model's policy read as (1 - E) psi + E / |A|, so one odd move costs a hypothesis
 # at most a factor of about |A| / E; folders ..._lapse<E>),
@@ -111,6 +115,7 @@ FLAGS="--levels 2 2 --objects inferred --steal --foreign-carry-cost 1 --inertia 
 [ -n "$LAPSE" ] && FLAGS="$FLAGS --lapse $LAPSE"  # a lapse in the likelihood (2026-11-04; folders _lapse<E>)
 [ -n "$LPOW" ] && FLAGS="$FLAGS --likelihood-power $LPOW"   # a tempered update (2026-11-04; folders _lpow<ALPHA>)
 [ -n "$WINDOW" ] && FLAGS="$FLAGS --belief-window $WINDOW"   # a window on the evidence (2026-11-04; folders _window<N>)
+[ "${FEINT:-0}" = 1 ] && FLAGS="$FLAGS --decoy-feint"   # a coercer that looks ahead at a decoy feint (2026-11-04; folders _feint; twice the memory)
 [ -n "$LAZY" ] && FLAGS="$FLAGS --lazy $LAZY"     # lazy hypotheses (2026-11-04; folders _lazy<MASS>)
 [ "${JOINT:-0}" = 1 ] && FLAGS="$FLAGS --joint-posterior"   # one joint (object, destination) posterior, the rule until 2026-11-04
 [ -n "$MEM" ] && FLAGS="$FLAGS --max-memory-gib $MEM"   # (not in the folder name: same model)

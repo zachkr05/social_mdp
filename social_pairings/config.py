@@ -94,6 +94,11 @@ ADDED_FIELDS = dict(
     option_start=0.05,
     option_switch=0.02,
     option_keepaway_end=0.2,
+    decoy_feint=False,             # 2026-11-04 (evening; no robot looked ahead at a feint)
+    feint_goals=("coercion",),
+    feint_margin=0.0,
+    feint_min_shift=0.01,
+    feint_cooldown=10,
 )
 
 
@@ -583,6 +588,26 @@ class Config:
     # past, Bayes' rule.  Needs the two posteriors apart (belief_factored, the default) and no
     # hand hazard (a window forgets by itself).  Folders ..._window<n>.
     belief_window: int = 0
+    # A decoy feint (2026-11-04; the user, of hinder / coercion: "How can we alter the reward
+    # function such that the coercive agent will go pick up the green object to manipulate the
+    # green agent into thinking it actually wants the green object", then "Ok how about u
+    # actually just implement it the rerun the scenario then show me the mp4 again";
+    # social_pairings/feint.py).  A level-2 robot whose social goal is one of feint_goals,
+    # with empty hands while its partner holds its object, looks ahead at walking to another
+    # object (the decoy) and lifting it, feeding each step to the PARTNER'S OWN belief update,
+    # and values the end with every model solved afresh at the belief the partner would then
+    # hold (a second model: twice the memory); it takes the option if that beats its plan by
+    # more than feint_margin (reward units), follows it until the decoy is in its hands, then
+    # plans as before.  Where the partner's belief in the decoy would move by less than
+    # feint_min_shift the end is valued by the plan as it is (no second solve).  After an
+    # option, feint_cooldown transitions before the next.  No reward added (the document's
+    # kappa = 0).  Needs the partner's object inferred and picking by hand.  Folders
+    # ..._feint.
+    decoy_feint: bool = False
+    feint_goals: tuple = ("coercion",)
+    feint_margin: float = 0.0
+    feint_min_shift: float = 0.01
+    feint_cooldown: int = 10
     # Everything the belief update computes, in the record (2026-11-04; the user: "just have
     # it put all diagnostics into the json file. All information for belief calculation
     # should be in the JSOn", and "Lets also add these to logs: Q_{d,xi}(s_t, a_t),
@@ -792,6 +817,22 @@ class Config:
                 or not isinstance(self.belief_window, (int, np.integer))
                 or self.belief_window < 0):
             raise ValueError("belief_window must be an int >= 0 (0: the whole past)")
+        if not isinstance(self.decoy_feint, (bool, np.bool_)):
+            raise ValueError("decoy_feint must be True or False")
+        if isinstance(self.feint_goals, str):
+            raise ValueError("feint_goals must be a tuple of social goals, e.g. ('coercion',)")
+        for goal in self.feint_goals:
+            parse_goal(goal)                     # raises on an unknown goal
+        if not np.isfinite(self.feint_margin):
+            raise ValueError("feint_margin must be a finite number")
+        if not 0.0 <= self.feint_min_shift <= 1.0:
+            raise ValueError("feint_min_shift must lie in [0, 1]")
+        if (isinstance(self.feint_cooldown, (bool, np.bool_))
+                or not isinstance(self.feint_cooldown, (int, np.integer))
+                or self.feint_cooldown < 0):
+            raise ValueError("feint_cooldown must be an int >= 0")
+        if self.decoy_feint and self.automatic_hands:
+            raise ValueError("decoy_feint needs picking by hand (automatic_hands=False)")
         for name in ("park_eps", "idle_eps"):
             if not 0.0 <= getattr(self, name) < 1.0:
                 raise ValueError(f"{name} must lie in [0, 1)")

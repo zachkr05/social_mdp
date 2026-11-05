@@ -124,6 +124,17 @@ compare). The subgoal settings are `--option-temperature`, `--option-detour`,
 `--option-start`, `--option-switch` of `examples/run_object_inference.py`. Tested on the tiny
 scene (`social_pairings/tests/test_cut.py`); not run closed-loop yet.
 
+## A decoy feint: `FEINT` (option, 2026-11-04)
+
+`FEINT=1` (`--decoy-feint`, `Config.decoy_feint`; README, "A decoy feint"): a level-2 coercer
+whose partner holds its object looks ahead at lifting the other object, the partner's own
+belief update fed each step and the option's end valued with every model re-solved at the
+belief the partner would then hold, and does it where that beats its plan. A rollout holds a
+second model for the end: give it twice the memory (`MEM`, `MEM_HOUSE`). Folders `..._feint`.
+
+    FEINT=1 SAME=1 TAUS="0.2" GOALS1=hinder GOALS2=coercion NOVIDEO=0 MEM=6 sh run_tau_grid.sh   # the two-room scene
+    FEINT=1 HAZARD=0.02 SAME=1 TAUS="0.2" GOALS1=hinder GOALS2=coercion NOVIDEO=0 MEM=6 sh run_tau_grid.sh
+
 ## A window on the evidence: `WINDOW` (option, 2026-11-04)
 
 The user: "Lets add a replay buffer such that the posterior only factors in the past 5 steps
