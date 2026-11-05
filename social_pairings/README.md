@@ -2468,6 +2468,34 @@ its next choice uses that.
   robot's own goal finishes it with the robot; a posterior that
   is a point mass on the truth decides as the oracle does; the decision is the weighted Q of
   the plans; the hypotheses kept, merged and weighted; a rollout.
+* *At what depth the robot reads its partner* (`Config.belief_inference`, `--belief-inference`;
+  the user, 2026-11-05 evening: "it should be inferring at level 2 not 1 because its a level 2
+  agent" -- "So we are making it level 3 essentially?" -- "OK go ahead and implement this").
+  With the partner inferred, the first run (two-room, the decoy setting, task reward) never
+  delivered: Eqs. 5-6 on the partner's level-1 models -- a level-2 agent's inference as the
+  paper prints it -- cannot read a level-2 hinderer. A level-1 hinderer without a goal of its
+  own earns $-w\,r(g_j)$, zero until the robot is within the reward radius of done (its way
+  15 transitions at the start, the radius 10 cells), so it stays; at $\tau = 0.1$ the
+  hinderer's first move has likelihood $e^{-0.45/0.1} \approx 1/90$ under it and its pick-up
+  $e^{-9.5}$. Hinder was dead by transition 2, the coercer sure its partner wanted the
+  coercer's own object at the coercer's own destination (0.96 at 8) and about to deliver it,
+  and it waited: the hostage was never learnt from either, the idle mode explaining every
+  stay. `"level2"`: the likelihood of the partner's action under each hypothesis $(g, \xi)$
+  is the partner's **level-2** root under it, re-solved at the partner's belief about the
+  robot (the models the planner predicts the partner by), softmaxed at the likelihood's
+  $\tau$ -- Eq. 5 with $\psi^2$ in place of $\psi^1$, Eq. 6 likewise; the idle mode, the
+  transition term, the stages, the hazards, the lapse and the power as before, the partner's
+  own inference at its own level. In the paper's bookkeeping that is a **level-3 coercer**
+  (it models a level-2 hinderer, which models it at level 1, which models the hinderer at
+  level 0), its rewards those of every level above 1; its model of the hinderer is exact up
+  to the hinderer's goals, so the true hypothesis' policy has the hinderer's greedy action as
+  its argmax at every transition (checked in `tests/test_belief_inference.py`), and the
+  stays of a stand-off are evidence for guarding rather than for the idle mode. Every
+  hypothesis the posteriors hold possible is re-solved every transition, in one batch, warm
+  from the last (~84 level-2 solves on the two-room scene; `inference_log` in the record:
+  solves and seconds per transition), the decision's own hypotheses not twice. Folders
+  `..._binf2`; `run_belief_partner.sh`, `run_belief_2x2.sh` and `run_belief_scenes.sh` take
+  `INFERENCE=level2`.
 * *The beliefs*: at most `belief_points` (40) belief points -- the partner's belief now
   (point 0, exact), those it would form if the robot acted by each hypothesis it holds about
   it (the robot's level-1 models, most likely action: probes), and those along the planned

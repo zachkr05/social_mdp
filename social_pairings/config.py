@@ -117,6 +117,7 @@ ADDED_FIELDS = dict(
     belief_partner="oracle",       # 2026-11-05 (evening; the partner's true goals in the plan)
     belief_partner_mass=0.05,
     belief_partner_max=4,
+    belief_inference="level1",     # 2026-11-05 (evening; Eqs. 5-6 on the partner's level-1 models)
     steal_robots=(True, True),     # 2026-11-05 (both robots took, with steal)
     forced_actions=(),             # 2026-11-05 (nothing forced)
 )
@@ -729,6 +730,29 @@ class Config:
     belief_partner: str = "inferred"
     belief_partner_mass: float = 0.05
     belief_partner_max: int = 4
+    # At what depth the planning robot reads its partner (2026-11-05, evening; the user: "it
+    # should be inferring at level 2 not 1 because its a level 2 agent", then "So we are
+    # making it level 3 essentially?" -- "OK go ahead and implement this").  "level1" (the
+    # default): Eqs. 5-6 on the partner's level-1 hypothesis models, a level-2 agent's
+    # inference as the paper prints it -- which cannot read a level-2 partner: a level-1
+    # hinderer without a goal of its own earns nothing until the robot is within the reward
+    # radius of done, so it stays, and the real (level-2) hinderer's preemptive guarding of
+    # the robot's object reads as "it wants that object" (the run of 2026-11-05 midday: hinder
+    # dead by transition 2, the coercer then sure its partner would deliver its object for
+    # it).  "level2": the likelihood of the partner's action under each hypothesis (physical
+    # goal, social goal) is the partner's LEVEL-2 root under that hypothesis, re-solved at the
+    # partner's belief about the robot (the same models the belief planner predicts the
+    # partner by), softmaxed at the likelihood's tau (Eq. 7) -- Eq. 5 with psi^2 in place of
+    # psi^1, and Eq. 6 likewise: the recursion one level deeper, a level-3 agent whose model
+    # of a level-2 partner is exact up to the partner's goals (the partner really is level 2,
+    # reading the robot at level 1).  Table I's rewards are those of every level above 1.
+    # The idle mode, the transition term, the stages, the hazards, the lapse and the power
+    # apply as before; the partner's own inference stays at its level.  Only the planning
+    # robots (belief_planning_goals), with the belief planner on; needs
+    # physical_likelihood="level1" and the partner's social goal inferred.  Every
+    # hypothesis the posteriors hold possible is re-solved every transition (~84 level-2
+    # solves of the partner on the two-room scene).  Folders ..._binf2.
+    belief_inference: str = "level1"
     # The first transitions' joint actions, forced (2026-11-05; "the first 20 transitions as
     # before"): a history to start from -- e.g. the first 20 transitions of a rollout in which
     # the hinderer took the coercer's object -- the robots watching it and updating their
@@ -977,6 +1001,18 @@ class Config:
         _one_of(self, "belief_interpolation", ("segment", "nearest"))
         _one_of(self, "belief_tail", ("frozen", "cap"))
         _one_of(self, "belief_partner", ("inferred", "oracle"))
+        _one_of(self, "belief_inference", ("level1", "level2"))
+        if self.belief_inference == "level2":
+            if self.belief_planning == "off":
+                raise ValueError('belief_inference="level2" is the belief planner\'s (the '
+                                 'partner re-solved under each hypothesis): set '
+                                 'belief_planning to "frozen" or "updated"')
+            if self.physical_likelihood != "level1":
+                raise ValueError('belief_inference="level2" replaces the level-1 models of '
+                                 'Eqs. 5-6 (physical_likelihood="level1") by level-2 ones')
+            if self.partner_social_goal != "inferred":
+                raise ValueError('belief_inference="level2" reads the partner\'s social goal: '
+                                 'partner_social_goal must be "inferred"')
         if not (np.isfinite(self.belief_partner_mass) and 0.0 <= self.belief_partner_mass < 1.0):
             raise ValueError("belief_partner_mass must lie in [0, 1)")
         if (isinstance(self.belief_partner_max, (bool, np.bool_))

@@ -11,6 +11,8 @@
 #     ONLY="updated:task" sh run_belief_2x2.sh     # one condition (planner:objective)
 #     PARTNER=oracle sh run_belief_2x2.sh          # the hinderer's true goals in the plan (the
 #                                                  # rule of the morning; default: inferred)
+#     INFERENCE=level2 sh run_belief_2x2.sh        # the coercer reads the hinderer at level 2
+#                                                  # (a level-3 coercer; folders _binf2)
 #
 # The decoy (2026-11-05; social_pairings/README.md, "What it found"): only the hinderer may
 # take, and the hinderer has lifted the coercer's object while the coercer waited beside the
@@ -41,7 +43,7 @@ for c in $CONDITIONS; do
   planner=${c%%:*}
   objective=${c##*:}
   args="--objective $objective"
-  [ "$planner" != off ] && args="$args --belief-planning $planner${PARTNER:+ --belief-partner $PARTNER}"
+  [ "$planner" != off ] && args="$args --belief-planning $planner${PARTNER:+ --belief-partner $PARTNER}${INFERENCE:+ --belief-inference $INFERENCE}"
   echo "== $planner / $objective"
   $PY -u examples/run_object_inference.py $FLAGS $args $EXTRA --verbose \
     > "$LOGS/${planner}_${objective}.log" 2>&1

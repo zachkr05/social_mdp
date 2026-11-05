@@ -93,6 +93,19 @@ INFERRED = ("the partner's own model under each hypothesis about its goals that 
             "reconstructed from the history both robots see")
 
 
+class _Models:
+    """n models on scratch arrays P, pd, ho, each its own agent, var, svar, social and zero
+    (``over``: arrays (n,)): what ``SocialMDP._solve`` reads when the partner's root is
+    re-solved under n hypotheses in one batch (:meth:`BeliefPlanner._partner_batch_hyps`)."""
+
+    def __init__(self, P, pd, ho, over: dict) -> None:
+        self.P, self.pd, self.ho = P, pd, ho
+        n = P.shape[0]
+        self.p_of = np.arange(n, dtype=np.int64)
+        for name in ("agent", "var", "svar", "social", "zero"):
+            setattr(self, name, np.ascontiguousarray(over[name]))
+
+
 class _OneModel:
     """Row ``row`` of a bank n times over, renumbered 0 .. n - 1, on scratch arrays P, pd,
     ho: what ``SocialMDP._solve`` reads when the partner's root is re-solved at n belief
@@ -194,6 +207,12 @@ class BeliefPlanner:
         self.likelihood_dtype = None
         self._base = None                     # (S, 10, 10) buffer
         self._hyp_cache: dict = {}            # (robot, hypothesis key) -> its tables
+        # Config.belief_inference="level2": the partner's level-2 root under every
+        # hypothesis, solved at its belief about the robot for the likelihood of its action
+        self.inference_level = cfg.belief_inference
+        self._point0: dict = {}               # (robot, hypothesis key) -> (Q, V) this transition
+        self._lik_warm: dict = {}             # (robot, hypothesis key) -> V (warm starts)
+        self.inference_log: list = []         # per transition: solves, seconds
 
     # ---- static tables -----------------------------------------------------------------------
     @staticmethod
@@ -494,6 +513,7 @@ class BeliefPlanner:
         """{robot: its Q at ``state``} for the planning robots whose goal is not done yet
         (the rollout then chooses by it, with its inertia)."""
         out = {}
+        self._point0 = {}
         if t < max(int(self.cfg.belief_planning_from), len(self.cfg.forced_actions)):
             return out                       # the history before (Eq. 4's planner, or forced)
         for r in self.robots:
@@ -623,6 +643,7 @@ class BeliefPlanner:
             d = ((prev["Z"] - _Points.embed_point(mdp, r, point0)) ** 2).sum(-1)
             warm0 = prev["Vp"][int(np.argmin(d))]
         Q0, Vp0, _ = self._partner_tables(mdp, r, None, ok, lo, hi, warm0, H)
+        self._point0[(r, H.key)] = (Q0, Vp0)     # (reused by the level-2 likelihood)
         b0, a0 = np.empty(S, dtype=np.int8), np.empty(S, dtype=np.int8)
         choice_tables(Q0, self.margin, b0, a0)
         a_p0 = int(a0[s0] if u0 == b0[s0] else b0[s0])
@@ -681,6 +702,136 @@ class BeliefPlanner:
         self.keep[(r, H.key)] = pts.keep()
         return out
 
+    # ---- the likelihood of the partner's action at level 2 (Config.belief_inference) ---------
+    def inference(self, mdp, s: int) -> None:
+        """Before ``SocialMDP.observe`` of the transition from joint state s: for each planning
+        robot r, the level-2 models of its partner under every hypothesis (physical goal,
+        social goal) its posteriors hold possible, solved at the partner's belief about r
+        (as it is now, before the update: point 0), their policies at s -- into
+        ``mdp.likelihood_override[p]`` for Eqs. 5-6 to read in place of the level-1 models
+        (``SocialMDP.hypothesis_log_policies``).  Nothing under "level1"."""
+        mdp.likelihood_override = {}
+        if self.inference_level != "level2":
+            return
+        for r in self.robots:
+            mdp.likelihood_override[1 - r] = self.log_policies(mdp, r, s)
+
+    def log_policies(self, mdp, r: int, s: int) -> tuple:
+        """(q (PG, T, 10), log psi (PG, T, 10)): robot r's partner's level-2 root under each
+        hypothesis (g, t) -- the partner's physical goal g and social goal t of robot r's
+        hypothesis goals -- re-solved at the partner's belief about robot r, its Q at joint
+        state s and log softmax(Q / tau) at the tau robot r reads its partner at
+        (``SocialMDP.inference_taus[r]``); NaN for the hypotheses the posteriors rule out
+        (not solved).  The hypotheses of this transition's decision are not re-solved
+        (:attr:`_point0`); every solve warm-starts from the last transition's."""
+        w, cfg = mdp.w, mdp.cfg
+        p = 1 - r
+        tic = time.perf_counter()
+        about = mdp.about[p]
+        types = [int(t) for t in mdp.hyp_goals[r]]
+        T = len(types)
+        q_all = np.full((mdp.PG, T, N_ACTIONS), np.nan)
+        lp_all = np.full((mdp.PG, T, N_ACTIONS), np.nan)
+        if about.log_social is None:
+            return q_all, lp_all
+        tau = float(mdp.inference_taus[r])
+        c0 = int(s // w.NN)
+        blocks = mdp.reach_of(r, mdp.own_goal[r], c0)
+        ok = np.zeros_like(w.state_ok)
+        ok[blocks] = w.state_ok[blocks]
+        _, lo, hi = block_items(w.NN, blocks, 0)
+        point0 = (about.log_phys, about.log_social, float(about.idle))
+        # the partner's belief about robot r, by which every hypothesis model is solved
+        m0 = mdp.about[r]
+        belief = (m0.log_phys, m0.log_social, float(m0.idle))
+        pending, solves = [], 0
+        for g in range(mdp.PG):
+            if not np.isfinite(point0[0][g]):
+                continue
+            for ti, t in enumerate(types):
+                if not np.isfinite(point0[1][ti]):
+                    continue
+                H = self._hyp(mdp, r, g, t, 1.0, None, False)
+                got = self._point0.get((r, H.key))
+                if got is not None:
+                    Q = got[0]
+                    q_all[g, ti] = Q[s]
+                    continue
+                pending.append((g, ti, H))
+        size = max(1, int(mdp.batch))
+        for i0 in range(0, len(pending), size):
+            group = pending[i0:i0 + size]
+            warm = [self._lik_warm.get((r, H.key)) for _, _, H in group]
+            out = self._partner_batch_hyps(mdp, r, belief, [H for _, _, H in group], ok, lo,
+                                           hi, warm)
+            for (g, ti, H), (Q, V, _) in zip(group, out):
+                q_all[g, ti] = Q[s]
+                self._lik_warm[(r, H.key)] = V
+                solves += 1
+        with np.errstate(invalid="ignore", divide="ignore"):
+            for g in range(mdp.PG):
+                for ti in range(T):
+                    q = q_all[g, ti]
+                    if np.isnan(q).all():
+                        continue
+                    lp_all[g, ti] = log_softmax(np.where(np.isnan(q), -np.inf, q) / tau)
+        self.inference_log.append(dict(robot=r, solves=solves,
+                                       hypotheses=int(np.isfinite(lp_all).any(axis=-1).sum()),
+                                       seconds=time.perf_counter() - tic))
+        return q_all, lp_all
+
+    def _partner_batch_hyps(self, mdp, r: int, belief: tuple, hyps: list, ok, lo, hi,
+                            warm: list) -> list:
+        """The partner's root under each hypothesis of ``hyps``, all at the one ``belief``
+        about robot r, re-solved in one call of the solver -> [(Q (S, 10), V (S,), stats)]
+        (:meth:`_partner_batch` across hypotheses instead of across beliefs)."""
+        w = mdp.w
+        p = 1 - r
+        depth, row = mdp.root[p]
+        bank = mdp.bank(depth)
+        n, S, A = len(hyps), w.S, N_ACTIONS
+        P = np.zeros((n, S, A))
+        R = np.zeros((n, S, A), dtype=np.float32)
+        pd = np.zeros((n, w.B, w.K, w.N, A))
+        ho = np.zeros((n, S, A)) if mdp.infer_object else np.zeros((n, 1, A))
+        V = np.empty((n, S))
+        rows = np.array([row], dtype=np.int64)
+        lp, ls, q = belief
+        over = dict(agent=np.empty(n, dtype=np.int64), var=np.empty(n, dtype=np.int64),
+                    svar=np.empty(n, dtype=np.int64), social=np.empty(n, dtype=np.int64),
+                    zero=np.empty(n, dtype=np.int64))
+        blocks = []
+        t0 = time.perf_counter()
+        for i, H in enumerate(hyps):
+            about = [None, None]
+            about[p] = mdp.about[p]
+            about[r] = PartnerBelief(lp.copy(), None if ls is None else ls.copy(), float(q))
+            if H.task_nested:
+                nested = np.zeros(mdp.PG)
+                nested[int(H.goal)] = 1.0
+            else:
+                nested = about[p].phys()
+            inputs_typed(*mdp._input_args(depth, H.slot, rows, [int(H.social)],
+                                          out=(P, i, R[i:i + 1], pd, ho), about=about,
+                                          flags=([H.over["social"]], [H.over["zero"]]),
+                                          nested=nested))
+            for name in over:
+                over[name][i] = H.over[name]
+            full = mdp.reach_of(p, int(H.goal), int(bank.block[row]))
+            blocks.append(full[w.done[full, p] == 0] if H.over["zero"] else full)
+            V[i] = bank.V[row] if warm[i] is None else warm[i]
+        t1 = time.perf_counter()
+        st = mdp._solve(V, R, _Models(P, pd, ho, over), np.arange(n, dtype=np.int64), blocks)
+        t2 = time.perf_counter()
+        out = []
+        for i, H in enumerate(hyps):
+            Q = self._q(mdp, bank, row, R, P, V, i, i, pd, ho, ok, lo, hi, H.over)
+            out.append((Q, V[i].copy(), st[i]))
+        self.clock["inference_inputs"] = self.clock.get("inference_inputs", 0.0) + t1 - t0
+        self.clock["inference_solve"] = self.clock.get("inference_solve", 0.0) + t2 - t1
+        self.clock["inference_q"] = self.clock.get("inference_q", 0.0) + time.perf_counter() - t2
+        return out
+
     def observe(self, t: int, act) -> None:
         """After the real transition: what the planning robots chose and what their partners
         did (the prediction's check)."""
@@ -697,7 +848,8 @@ class BeliefPlanner:
         return dict(robots=list(self.robots), mode=self.mode,
                     response=ORACLE if cfg.belief_partner == "oracle" else INFERRED,
                     partner=cfg.belief_partner, partner_mass=cfg.belief_partner_mass,
-                    partner_max=cfg.belief_partner_max,
+                    partner_max=cfg.belief_partner_max, inference=cfg.belief_inference,
+                    inference_log=self.inference_log,
                     objective=cfg.objective, horizon=cfg.belief_horizon,
                     points=cfg.belief_points, spacing=cfg.belief_spacing,
                     refinements=cfg.belief_refinements, interpolation=cfg.belief_interpolation,

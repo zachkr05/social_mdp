@@ -492,6 +492,11 @@ class SocialMDP:
         # what the last update computed, per robot j about which it was made
         # (Config.belief_detail; observe, updated_belief)
         self.last_update = None
+        # Config.belief_inference="level2" (beliefplan.BeliefPlanner.inference): per robot j,
+        # (q (PG, T, 10), log psi (PG, T, 10)) of the level-2 models of robot j under each
+        # hypothesis (physical goal, social goal) at the state of the transition being
+        # observed -- read by hypothesis_log_policies in place of the level-1 bank's
+        self.likelihood_override: dict = {}
 
     # ---- construction ------------------------------------------------------------------------
     def _initial_belief(self, j: int) -> PartnerBelief:
@@ -1430,10 +1435,19 @@ class SocialMDP:
         rec = detail is not None
         q_all = np.full((self.PG, len(hyp), N_ACTIONS), np.nan) if rec else None
         lp_all = np.full((self.PG, len(hyp), N_ACTIONS), np.nan) if rec else None
+        over = self.likelihood_override.get(j)   # Config.belief_inference="level2"
         for g in range(self.PG):
             if not np.isfinite(log_phys[g]):
                 continue
             for t in range(len(hyp)):
+                if over is not None:
+                    q, lp = over[0][g, t], over[1][g, t]
+                    if not np.isfinite(lp).any():   # not solved: ruled out when it was built
+                        continue
+                    out[g, t] = self.lapsed(lp)[a]
+                    if rec:
+                        q_all[g, t], lp_all[g, t] = q, lp
+                    continue
                 r = self.hypothesis_row(j, g, t)
                 if r not in rows:
                     q, lp = self._q_and_log_policy((1, r), s, j)
@@ -1442,7 +1456,8 @@ class SocialMDP:
                 if rec:
                     q_all[g, t], lp_all[g, t] = rows[r][0], rows[r][1]
         if rec:
-            detail["models"] = dict(_model_summary(q_all, lp_all, a), log_lik=out.copy())
+            detail["models"] = dict(_model_summary(q_all, lp_all, a), log_lik=out.copy(),
+                                    level=1 if over is None else 2)
         return out
 
     def social_log_likelihood(self, log_phys: np.ndarray, log_pol: np.ndarray) -> np.ndarray:

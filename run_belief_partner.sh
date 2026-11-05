@@ -9,30 +9,40 @@
 #   inferred -- the hypotheses (physical goal, social goal) of its own posteriors about the
 #               hinderer, the most likely covering 95 % of the mass (at most 4), weighted (QMDP);
 #   oracle   -- the hinderer's true goals (the rule of this morning).
-# Two worlds:
+# Three worlds:
 #   default  -- both robots may take what the other holds;
+#   guard    -- only the hinderer may take (the coercer cannot take its object back), nothing
+#               forced: the hinderer's opening is its own.  Under the oracle the coercer won by
+#               motion at 15 (it never needed to lift the decoy);
 #   decoy    -- only the hinderer may take, and the hinderer has lifted the coercer's object
 #               while the coercer waited beside the decoy (5 transitions forced).  Under the
 #               oracle the coercer lifts the decoy, the hinderer puts the object back and
 #               chases it, the coercer swaps and delivers at 23 (the desktop's run of 05:30).
+#               For the oracle only: the forced opening is no hinderer's choice at any level
+#               (it has nothing to gain before the coercer comes within the reward radius), so
+#               an inferring coercer reads it as "it wants my object" whatever its depth.
 # The 4 rollouts run side by side, THREADS each (default: the CPUs / 4), after a warm-up that
 # compiles the numba kernels once.
 #
 #     sh run_belief_partner.sh
 #     THREADS=8 sh run_belief_partner.sh
-#     PARTNERS="inferred" WORLDS="decoy" sh run_belief_partner.sh
+#     PARTNERS="inferred" WORLDS="guard" sh run_belief_partner.sh
+#     INFERENCE=level2 PARTNERS=inferred WORLDS="default guard" sh run_belief_partner.sh   # the level-3 coercer
 #     EXTRA="--belief-partner-max 6" sh run_belief_partner.sh     # more hypotheses (folders _bpk6)
+#     INFERENCE=level2 sh run_belief_partner.sh    # the coercer reads the hinderer with its
+#                                                  # level-2 models (Config.belief_inference:
+#                                                  # a level-3 coercer; folders _binf2)
 #
 # Records and videos: output/object_inference_two_..._bplanupdated[_bpinf]/ (the oracle's
 # folders carry no _bpinf); logs: logs/belief_partner/<world>_<partner>.log.  Each decision --
 # the hypotheses, the weights, the predicted and the actual move of the hinderer:
 #     python3 tools/belief_plan.py output/<folder>/hinder__coercion__inferred.json
-# Environment: PY (python3), THREADS, WORLDS ("default decoy"), PARTNERS ("inferred oracle"),
-# STEPS (60), NOVIDEO (0), EXTRA (more flags for every rollout).
+# Environment: PY (python3), THREADS, WORLDS ("default guard"; also decoy), PARTNERS ("inferred oracle"),
+# STEPS (60), NOVIDEO (0), INFERENCE (level1 | level2), EXTRA (more flags for every rollout).
 cd "$(dirname "$0")" || exit 1
 PY=${PY:-python3}
 NCPU=$(nproc 2>/dev/null || echo 4)
-WORLDS=${WORLDS:-default decoy}
+WORLDS=${WORLDS:-default guard}
 PARTNERS=${PARTNERS:-inferred oracle}
 N=0
 for w in $WORLDS; do for p in $PARTNERS; do N=$((N + 1)); done; done
@@ -44,6 +54,7 @@ fi
 FLAGS="--levels 2 2 --objects inferred --swap --steal --foreign-carry-cost 1 --inertia 1 --pick-cost 2"
 FLAGS="$FLAGS --temperature 0.2 --pairing hinder coercion --steps ${STEPS:-60}"
 FLAGS="$FLAGS --objective task --belief-planning updated --verbose --resume"
+[ -n "$INFERENCE" ] && FLAGS="$FLAGS --belief-inference $INFERENCE"   # level2: a level-3 coercer
 [ "${NOVIDEO:-0}" = 1 ] && FLAGS="$FLAGS --no-video"
 LOGS=logs/belief_partner
 mkdir -p "$LOGS"
@@ -56,8 +67,9 @@ for w in $WORLDS; do
   for p in $PARTNERS; do
     case $w in
       default) world="" ;;
+      guard)   world="--steal-robots 1 0" ;;
       decoy)   world="--steal-robots 1 0 --forced-actions +y,stay pick,stay pick,stay pick,stay stay,stay" ;;
-      *) echo "unknown world $w (default, decoy)"; exit 1 ;;
+      *) echo "unknown world $w (default, guard, decoy)"; exit 1 ;;
     esac
     log="$LOGS/${w}_${p}.log"
     echo "$(date '+%F %T') start $w / $p ($THREADS threads) -> $log"

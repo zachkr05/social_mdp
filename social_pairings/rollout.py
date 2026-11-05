@@ -691,7 +691,9 @@ def rollout(world: ObjectWorld, goal_ids: Sequence[int], solo_steps: Sequence[in
                                              for i in (0, 1))
         if run.planner is not None:
             run.planner.observe(t, act)
+            run.planner.inference(mdp, s)        # Config.belief_inference="level2"
         mdp.observe(act, s, nxt, event)
+        mdp.likelihood_override = {}
         if mdp.last_update is not None:          # Config.belief_detail: the update's workings,
             run.trace[-1]["belief_update"] = tuple(mdp.last_update[1 - i]   # robot i's about
                                                    for i in (0, 1))       # its partner

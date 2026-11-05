@@ -606,6 +606,12 @@ def main() -> None:
     parser.add_argument("--belief-partner-max", type=int, default=None, metavar="K",
                         help="Config.belief_partner_max: the most hypotheses planned against "
                              "(default 4; 1 = the most likely alone; folders _bpk<K>)")
+    parser.add_argument("--belief-inference", choices=("level1", "level2"), default=None,
+                        help="Config.belief_inference: the belief planner's read of its "
+                             "partner -- Eqs. 5-6 on the partner's level-1 models (\"level1\", "
+                             "the default: a level-2 agent's inference) or on its level-2 "
+                             "models re-solved under every hypothesis (\"level2\": a level-3 "
+                             "agent; folders _binf2)")
     parser.add_argument("--belief-horizon", type=int, default=None, metavar="H",
                         help="Config.belief_horizon: transitions planned with the belief's "
                              "dynamics before the belief is held (default 40; folders _bh<H>)")
@@ -806,9 +812,13 @@ def main() -> None:
         elif args.belief_partner_mass is not None or args.belief_partner_max is not None:
             parser.error("--belief-partner-mass / --belief-partner-max go with "
                          "--belief-partner inferred")
+        if args.belief_inference is not None and args.belief_inference != "level1":
+            options = dict(options, belief_inference=args.belief_inference)
+            plan_tag += "_binf2"
     elif (args.belief_partner is not None or args.belief_partner_mass is not None
-          or args.belief_partner_max is not None):
-        parser.error("--belief-partner and its settings go with --belief-planning")
+          or args.belief_partner_max is not None or args.belief_inference is not None):
+        parser.error("--belief-partner, --belief-inference and their settings go with "
+                     "--belief-planning")
     for flag, field, short in (("belief_from", "belief_planning_from", "bfrom"),
                                ("belief_horizon", "belief_horizon", "bh"),
                                ("belief_points", "belief_points", "bp"),
