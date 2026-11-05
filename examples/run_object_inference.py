@@ -233,14 +233,25 @@ def reuse(path: Path, other: Optional[Path], cfg: Config, pair, levels) -> Optio
     return result
 
 
+def truth_of(result: dict, i: int) -> tuple:
+    """(object index, destination index) of robot i's partner's true goal in robot i's
+    beliefs: its own object, its destination -- or, with the goal-less hypotheses
+    (Config.goalless_hypotheses) and a partner without a goal of its own (a hinderer),
+    "no object" and "no destination", the last entry of each."""
+    p = 1 - i
+    goalless = bool(result["config"].get("goalless_hypotheses", False))
+    if goalless and not result.get("own_goal", (True, True))[p]:
+        return -1, -1
+    return p, int(result["scene"]["goal_ids"][p])
+
+
 def row_of(pair, mode: str, result: dict) -> dict:
     """What one rollout did."""
-    true_dest = result["scene"]["goal_ids"]
     final = result.get("final_object_belief")
-    objects = None if final is None else [round(float(final[i][1 - i]), 3)
+    objects = None if final is None else [round(float(final[i][truth_of(result, i)[0]]), 3)
                                           if result["levels_used"][i] >= 1 else None
                                           for i in (0, 1)]
-    dests = [round(float(result["final_belief"][i][true_dest[1 - i]]), 3)
+    dests = [round(float(result["final_belief"][i][truth_of(result, i)[1]]), 3)
              if result["levels_used"][i] >= 1 else None for i in (0, 1)]
     took = [dict(t=t, what=what, by=NAMES[by], obj=f"O{obj + 1}")
             for t, what, by, obj, *_ in result["events"]
@@ -272,8 +283,9 @@ def table(rows: list, title: str) -> str:
              "Transition at which agent_1 / agent_2 finished its own goal (– = never; no goal: "
              "a hinderer without a goal of its own); with the "
              "objects inferred, each robot's final belief that its partner wants the partner's "
-             "own object and that it goes to its true destination (– : a level-0 robot holds "
-             "no belief); acts for the partner that did not count (set-downs / hand-overs, "
+             "own object and that it goes to its true destination -- for a hinderer without a "
+             "goal of its own, with the goal-less hypotheses, \"no object\" and \"no "
+             "destination\" (– : a level-0 robot holds no belief); acts for the partner that did not count (set-downs / hand-overs, "
              "per robot).", "",
              "| pairing | " + ("known | " if known else "") + "inferred | belief: partner's "
              "object | ... its destination | in vain | wall time |",
@@ -328,13 +340,13 @@ def draw(records: dict, title: str, path: Path) -> None:
         for i, style in ((0, "-"), (1, "--")):
             if r["levels_used"][i] < 1:          # a level-0 robot holds no belief
                 continue
-            y = np.array([float(b[i][1 - i]) for b in rows])
+            y = np.array([float(b[i][truth_of(r, i)[0]]) for b in rows])
             ax.plot(x, y, style, color=ROBOT_COLOURS[i], lw=2.0, label=NAMES[i])
             done = r["done_at"][i]
             if done is not None:               # where this robot's own goal was done
                 ax.plot([done], [y[min(done, len(y) - 1)]], "o", ms=6, color=ROBOT_COLOURS[i],
                         mec=surface, mew=1.5, zorder=4)
-        ax.axhline(1.0 / m, color=quiet, lw=1.0, ls=":")
+        ax.axhline(1.0 / len(rows[0][0]), color=quiet, lw=1.0, ls=":")
         if max(r["levels_used"]) < 1:
             ax.text(0.5, 0.62, "level 0: neither robot\nholds a belief", ha="center",
                     va="center", transform=ax.transAxes, fontsize=9, color=quiet)
@@ -594,6 +606,12 @@ def main() -> None:
                              "(\"frozen\"), the partner predicted by its own model re-solved at "
                              "the belief, under the hypotheses about its goals the coercer's own "
                              "posteriors hold (--belief-partner).  Folders ..._bplan<mode>")
+    parser.add_argument("--belief-planning-goals", nargs="+", default=None, metavar="GOAL",
+                        help="Config.belief_planning_goals, with --belief-planning: the social "
+                             "goals of the robots that plan over their partner's belief "
+                             "(default: coercion hinder -- the hinderer plans too, a level-3 "
+                             "hinderer with --belief-inference level2, folders _bph; "
+                             "\"coercion\" alone: the runs before, no tag)")
     parser.add_argument("--belief-partner", choices=("inferred", "oracle"), default=None,
                         help="Config.belief_partner: whom the belief planner takes its partner "
                              "to be -- the hypotheses of its own posteriors about it, weighted "
@@ -650,6 +668,14 @@ def main() -> None:
                              "-- every hypothesis model's Q, Eq. 6's likelihoods, the beliefs "
                              "before and after -- some MB a rollout; tools/belief_step.py reads "
                              "it).  Not in the folder name: the same rollout")
+    parser.add_argument("--no-goalless", action="store_true",
+                        help="Config.goalless_hypotheses off: every hypothesis about the "
+                             "partner's goal has an object and a destination, as the paper's "
+                             "(the folders without _nogoal).  By default (since 2026-11-05 "
+                             "night) the posterior about the partner's object holds \"no "
+                             "object\" and the one about its destination \"no destination\" "
+                             "-- a goal-less hypothesis, no goal reward, never done (folders "
+                             "_nogoal); not with --physical-likelihood cut")
     parser.add_argument("--lazy", type=float, default=0.0, metavar="MASS",
                         help="Config.lazy_mass (since 2026-11-04): of a level-2 robot's hypothesis "
                              "models about its partner, the lightest ones whose mass in its two "
@@ -700,6 +726,11 @@ def main() -> None:
         options = dict(options, robot_temperatures=taus)
     if args.physical_likelihood is not None:
         options = dict(options, physical_likelihood=args.physical_likelihood)
+    # goal-less hypotheses (2026-11-05 night): "no object", "no destination" -- by default,
+    # but where the subgoals of "cut" read the destination's cell
+    goalless = not args.no_goalless and args.physical_likelihood != "cut"
+    if goalless:
+        options = dict(options, goalless_hypotheses=True)
     # the subgoals of the protected likelihood (2026-11-04): the defaults are the folders of
     # "cut"; a value set names its folder
     option_tags = []
@@ -815,10 +846,17 @@ def main() -> None:
         if args.belief_inference is not None and args.belief_inference != "level1":
             options = dict(options, belief_inference=args.belief_inference)
             plan_tag += "_binf2"
+        planners = tuple(args.belief_planning_goals or ("coercion", "hinder"))
+        options = dict(options, belief_planning_goals=planners)
+        if set(planners) == {"coercion", "hinder"}:
+            plan_tag += "_bph"                   # the hinderer plans too (2026-11-05 night)
+        elif set(planners) != {"coercion"}:
+            plan_tag += "_bpg" + "-".join(sorted(set(planners)))
     elif (args.belief_partner is not None or args.belief_partner_mass is not None
-          or args.belief_partner_max is not None or args.belief_inference is not None):
-        parser.error("--belief-partner, --belief-inference and their settings go with "
-                     "--belief-planning")
+          or args.belief_partner_max is not None or args.belief_inference is not None
+          or args.belief_planning_goals is not None):
+        parser.error("--belief-partner, --belief-inference, --belief-planning-goals and their "
+                     "settings go with --belief-planning")
     for flag, field, short in (("belief_from", "belief_planning_from", "bfrom"),
                                ("belief_horizon", "belief_horizon", "bh"),
                                ("belief_points", "belief_points", "bp"),
@@ -877,6 +915,7 @@ def main() -> None:
            + {"level0": "l0", "cut": "cut"}.get(Config(**options).physical_likelihood, "")
            + "".join(option_tags)    # the subgoals of "cut", where set (2026-11-04)
            + ("_objgoal" if factored else "")     # the two posteriors apart (2026-11-04)
+           + ("_nogoal" if goalless else "")      # goal-less hypotheses (2026-11-05 night)
            + ("" if inftau is None else f"_inftau{inftau:g}")
            + ("" if args.lapse <= 0.0 else f"_lapse{args.lapse:g}")
            + ("" if lpow == 1.0 else f"_lpow{lpow:g}")

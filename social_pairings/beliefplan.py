@@ -226,8 +226,9 @@ class BeliefPlanner:
         and ``true_tab``) by default, a world whose partner has the goals of a hypothesis
         otherwise (:meth:`_hyp`; ``same_goal``: its goal the robot's own, :func:`_same_goal`)."""
         r = 1 - p
-        if gs is None:
-            gs = [int(w.site_of[d]) for d in w.true_dest]
+        if gs is None:                       # the world's own (set_goal_less: site 0 for a
+            gs = list(w.true_gs)             # robot without a goal)
+            own = w.true_acc
         anywhere = [0, 0]
         anywhere[p], anywhere[r] = -2, int(gs[p])
         acc = [int(own[0]), int(own[1])]
@@ -259,10 +260,12 @@ class BeliefPlanner:
                                             slot=None, task_nested=False)
             else:
                 obj, dst = int(mdp.pg_obj[p][goal]), int(mdp.pg_dst[p][goal])
+                if mdp.goal_less[p][goal]:     # (Config.goalless_hypotheses): nothing to
+                    obj, dst = -1, w.K         # finish -- no goal object, no site
                 gs, ds, own = [0, 0], [0, 0], [0, 0]
-                gs[r], gs[p] = int(w.site_of[w.true_dest[r]]), int(w.dest_site[dst])
+                gs[r], gs[p] = int(w.true_gs[r]), int(w.dest_site_x[dst])
                 ds[r], ds[p] = gs[p], gs[r]          # a set-down for the partner counts there
-                own[r], own[p] = r, obj              # each robot's goal object
+                own[r], own[p] = int(w.true_acc[r]), obj     # each robot's goal object
                 tab = w._table(tuple(gs), tuple(ds), tuple(own), (True, True), tuple(own),
                                tuple(own))
                 # the partner's goal the robot's own (its object on its destination): one
@@ -313,12 +316,18 @@ class BeliefPlanner:
                 mass = float(phys[g] * soc[ti])
                 if not mass > 0.0:
                     continue
-                gkey = ("object", int(mdp.pg_obj[p][g]), t) if spoiler else (g, t)
+                if mdp.goal_less[p][g]:      # (Config.goalless_hypotheses) one model, one plan
+                    gkey = ("none", t)
+                elif spoiler:
+                    gkey = ("object", int(mdp.pg_obj[p][g]), t)
+                else:
+                    gkey = (g, t)
                 groups.setdefault(gkey, []).append((g, t, mass))
         ranked = []
-        for members in groups.values():
+        for gkey, members in groups.items():
             total = sum(m for _, _, m in members)
-            g_rep = max(members, key=lambda x: (x[2], -x[0]))[0]
+            g_rep = (mdp.goalless_rep[p] if gkey[0] == "none"
+                     else max(members, key=lambda x: (x[2], -x[0]))[0])
             ranked.append((total, g_rep, members[0][1], members))
         ranked.sort(key=lambda x: (-x[0], x[1], x[2]))
         kept, covered = [], 0.0
@@ -482,7 +491,7 @@ class BeliefPlanner:
         has_social = mdp.about[r].log_social is not None
         return (r, w.N, LL, mdp.log_idle[r], w.busy, w.hold, w.done,
                 np.ascontiguousarray(mdp.pg_obj[r]), np.ascontiguousarray(mdp.pg_dst[r]),
-                w.M, w.K, np.ascontiguousarray(w.dest), int(w.true_dest[r]), w.iscand,
+                np.ascontiguousarray(mdp.pg_acc[r]), mdp.n_obj, mdp.n_dst, w.dest_x, int(w.true_dest[r]), w.iscand,
                 w.site_of, failed, vain, H.tab, w.pev, w.psucc, has_social,
                 not mdp.known_social, bool(cfg.belief_factored), bool(cfg.belief_stages),
                 float(cfg.likelihood_power), float(cfg.hand_hazard), float(cfg.goal_hazard),
@@ -501,7 +510,7 @@ class BeliefPlanner:
         ls_in = ls if ls is not None else np.zeros(1)
         T = ls_in.size
         lp_out, ls_out = np.empty(PG), np.empty(T)
-        W = max(mdp.w.M, mdp.w.K, PG)
+        W = max(mdp.n_obj, mdp.n_dst, PG)
         q1 = belief_update(lp, ls_in, float(q), int(s), int(a_r), int(a_p),
                            *self._ctx(mdp, r, LL, H), lp_out, ls_out, np.empty((8, PG)),
                            np.empty((PG, T)), np.empty((3, T)), np.empty((6, W)),
@@ -745,19 +754,30 @@ class BeliefPlanner:
         m0 = mdp.about[r]
         belief = (m0.log_phys, m0.log_social, float(m0.idle))
         pending, solves = [], 0
+        # (Config.goalless_hypotheses) every goal-less hypothesis is the same model: solved
+        # once per social goal, under the one that stands for them all, and copied
+        rep = mdp.goalless_rep[p]
+        copies: dict = {}
+        scheduled: set = set()
         for g in range(mdp.PG):
             if not np.isfinite(point0[0][g]):
                 continue
+            g_solve = rep if mdp.goal_less[p][g] else g
             for ti, t in enumerate(types):
                 if not np.isfinite(point0[1][ti]):
                     continue
-                H = self._hyp(mdp, r, g, t, 1.0, None, False)
+                if g_solve != g:
+                    copies.setdefault((g_solve, ti), []).append(g)
+                if (g_solve, ti) in scheduled:   # (its representative already listed)
+                    continue
+                scheduled.add((g_solve, ti))
+                H = self._hyp(mdp, r, g_solve, t, 1.0, None, False)
                 got = self._point0.get((r, H.key))
                 if got is not None:
                     Q = got[0]
-                    q_all[g, ti] = Q[s]
+                    q_all[g_solve, ti] = Q[s]
                     continue
-                pending.append((g, ti, H))
+                pending.append((g_solve, ti, H))
         size = max(1, int(mdp.batch))
         for i0 in range(0, len(pending), size):
             group = pending[i0:i0 + size]
@@ -768,6 +788,11 @@ class BeliefPlanner:
                 q_all[g, ti] = Q[s]
                 self._lik_warm[(r, H.key)] = V
                 solves += 1
+        for (g_solve, ti), targets in copies.items():
+            for g in targets:
+                q_all[g, ti] = q_all[g_solve, ti]
+        if rep >= 0 and not np.isfinite(point0[0][rep]):   # the representative itself ruled
+            q_all[rep] = np.nan                             # out: only its copies stand
         with np.errstate(invalid="ignore", divide="ignore"):
             for g in range(mdp.PG):
                 for ti in range(T):
@@ -880,16 +905,16 @@ class BeliefPlanner:
         t_star = int(H.social)
         k_star = int(H.goal)
         obj_k, dst_k = int(mdp.pg_obj[p][k_star]), int(mdp.pg_dst[p][k_star])
-        al, be, nu, race_i = mdp.level2_term(r, int(mdp.goals[r]), t_star,
-                                             k_star == int(mdp.own_goal[r]))
+        same = k_star == int(mdp.own_goal[r]) and not mdp.goal_less[p][k_star]   # (goal-less:
+        al, be, nu, race_i = mdp.level2_term(r, int(mdp.goals[r]), t_star, same)  # no goal)
         a1, b1, c1 = mdp.level1_term(p, t_star)
         objective = self._objective(mdp, r)
         complete = objective == "complete"
         bonus = float(cfg.completion_bonus) if cfg.completion_bonus is not None else float(w.vdone)
         if self._base is None or self._base.shape != (w.S, N_ACTIONS, N_ACTIONS):
             self._base = np.zeros((w.S, N_ACTIONS, N_ACTIONS), dtype=np.float32)
-        joint_rewards(r, w.N, legal, w.cls_of, w.at_partner, w.cls_obj, w.at_partner_obj,
-                      w.rate_cls, w.fin_cls, w.cost_c, w.done, H.tab, w.pev, w.psucc, ok,
+        joint_rewards(r, w.N, legal, w.cls_of, w.at_partner, w.cls_obj_x, w.at_partner_obj_x,
+                      w.rate_cls_x, w.fin_cls_x, w.cost_c, w.done, H.tab, w.pev, w.psucc, ok,
                       int(mdp.goal_ids[r]), obj_k, dst_k, float(al), float(be), float(nu),
                       float(race_i), float(b1), float(c1), float(mdp.lead),
                       float(mdp.cost_in_partner_reward), complete, bonus, lo, hi, self._base)
@@ -910,8 +935,9 @@ class BeliefPlanner:
         else:
             mine = np.exp(lp - np.logaddexp.reduce(lp))
         nested_row(r, w.N, np.ascontiguousarray(mine), np.ascontiguousarray(mdp.pg_obj[r]),
-                   np.ascontiguousarray(mdp.pg_dst[r]), w.cls_est, w.at_partner_est, w.cls_obj,
-                   w.at_partner_obj, w.rate_cls, w.fin_cls, ok, coef["obj_k"], coef["dst_k"],
+                   np.ascontiguousarray(mdp.pg_dst[r]), w.cls_est_x, w.at_partner_est_x,
+                   w.cls_obj_x, w.at_partner_obj_x, w.rate_cls_x, w.fin_cls_x, ok, coef["obj_k"],
+                   coef["dst_k"],
                    coef["al"], coef["a1"], coef["c1"], float(mdp.lead), lo, hi, out)
         return out
 

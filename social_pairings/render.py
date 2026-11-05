@@ -298,6 +298,11 @@ class _Story:
         # the objects in the model (the scenery, after them in the record, is nobody's goal)
         self.n_objects = (len(self.frames[0]["object_belief"][0]) if self.objects_inferred
                           else len(self.homes))
+        # Config.goalless_hypotheses (2026-11-05 night): each belief has one entry more, "no
+        # object" after the objects and "no destination" after the candidates
+        self.goalless = bool(config.get("goalless_hypotheses", False))
+        self.n_real_objects = self.n_objects - (1 if self.goalless and self.objects_inferred
+                                                else 0)
         self.true_social = [
             "none" if goals[i] in (None, "none") or levels[i] == 0 or weights[i] == 0
             else str(goals[i]) for i in (0, 1)]
@@ -552,6 +557,8 @@ class _Canvas:
         nx, ny = self.walls.shape
         self.extent = [0.0, nx * self.res, 0.0, ny * self.res]
         self.K = len(self.story.candidates)
+        # the destination bars: the candidates, and "no destination" (goal-less hypotheses)
+        self.KB = self.K + (1 if self.story.goalless else 0)
         self.object_colour = [ROBOT_COLOURS[k] if k < 2 else SPARE_COLOUR
                               for k in range(len(self.story.homes))]
         self._value_limits()
@@ -566,11 +573,11 @@ class _Canvas:
             # where a robot has to infer which object its partner wants, the objects and the
             # destinations share one panel: O1..OM, a gap, G0..G(K-1)
             M = self.story.n_objects if self.story.objects_inferred else -1
-            self.belief_x = (np.arange(M), M + 1 + np.arange(self.K))     # objects, destinations
+            self.belief_x = (np.arange(M), M + 1 + np.arange(self.KB))    # objects, destinations
             if self.story.inferred:              # two beliefs side by side
                 # as wide as its bars, but never so wide that the social goals' tick labels
                 # run into each other
-                ratio = 1.0 if M < 0 else min((M + 1 + self.K) / (self.K + 0.6), 1.45)
+                ratio = 1.0 if M < 0 else min((M + 1 + self.KB) / (self.K + 0.6), 1.45)
                 halves = GridSpecFromSubplotSpec(1, 2, subplot_spec=spec[1, 1], wspace=0.13,
                                                  width_ratios=[ratio, 1.3])
                 self.ax_belief = self.fig.add_subplot(halves[0, 0])
@@ -1054,7 +1061,10 @@ class _Canvas:
         from matplotlib.lines import Line2D
         from matplotlib.patches import Patch
 
-        ax, frame, K, width = self.ax_belief, self.frames[f], self.K, 0.38
+        ax, frame, K, width = self.ax_belief, self.frames[f], self.KB, 0.38
+        o_names = [f"O{q + 1}" for q in range(self.story.n_real_objects)]
+        o_names += ["none"] * (self.story.n_objects - len(o_names))       # no object
+        d_names = [f"G{k}" for k in range(self.K)] + ["none"] * (K - self.K)   # no destination
         objects = self.story.objects_inferred
         xo, xd = self.belief_x
         leads = [[], []]                         # per robot: its leading object, destination
@@ -1070,10 +1080,9 @@ class _Canvas:
                 ax.bar(xo + (i - 0.5) * width, mine, width=width, color=ROBOT_COLOURS[i],
                        edgecolor=edges, linewidth=1.4)
                 leads[i].append(self._lead(ax, i, xo + (i - 0.5) * width, mine,
-                                           [f"O{q + 1}" for q in range(mine.size)]))
+                                           o_names[:mine.size]))
             if belief.size:
-                leads[i].append(self._lead(ax, i, xd + (i - 0.5) * width, belief,
-                                           [f"G{k}" for k in range(K)]))
+                leads[i].append(self._lead(ax, i, xd + (i - 0.5) * width, belief, d_names))
         self._lead_text(ax, leads)
         if objects:                              # uniform over each, and the gap between
             ax.hlines(1.0 / xo.size, xo[0] - 0.5, xo[-1] + 0.5, linestyles=":", colors="0.35",
@@ -1086,7 +1095,7 @@ class _Canvas:
         ax.set_ylim(0, LEAD_TOP)
         ax.set_yticks([0.0, 0.5, 1.0])
         ax.axhline(1.0, c="0.82", lw=0.7, zorder=0)
-        ticks = [f"O{q + 1}" for q in range(xo.size)] + [f"G{k}" for k in range(K)]
+        ticks = o_names[:xo.size] + d_names
         ax.set_xticks(np.concatenate([xo, xd]))
         ax.set_xticklabels(ticks, fontsize=8 if len(ticks) <= 11 else 7)
         ax.tick_params(axis="y", labelsize=8)

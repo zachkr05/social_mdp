@@ -541,7 +541,7 @@ def _hazard_phys(lp, h, objects, factored, stages, obj, dst, PG, M, K, out, wf):
 
 @njit(cache=True)
 def belief_update(lp0, ls0, q0, s, a_r, a_p, r, N, LL, log_idle_r, busy, hold, done, pg_obj,
-                  pg_dst, M, K, dest, true_dest_r, iscand, site_of, failed_p, vain_p, true_tab,
+                  pg_dst, pg_acc, M, K, dest, true_dest_r, iscand, site_of, failed_p, vain_p, true_tab,
                   pev, psucc, has_social, infer_social, factored, stages, alpha, hand_h, goal_h,
                   social_h, idle_on, idle_h, cond_place, lp_out, ls_out, wp, wl, wt, wf, keep):
     """The partner's update of its belief about robot r after robot r's a_r and its own a_p
@@ -636,13 +636,13 @@ def belief_update(lp0, ls0, q0, s, a_r, a_p, r, N, LL, log_idle_r, busy, hold, d
                     if pg_obj[g] == held_p and dest[pg_dst[g]] == yp:
                         keep[g] = False
             if a_p == GIVE and held_p >= 0:                   # the partner's hand-over
-                if hold[c2, r] == held_p:
+                if hold[c2, r] == held_p:                     # (pg_acc: what each takes)
                     for g in range(PG):
-                        if pg_obj[g] != held_p:
+                        if pg_acc[g] != held_p:
                             keep[g] = False
                 elif vain_p[c, ev] != 0:
                     for g in range(PG):
-                        if pg_obj[g] == held_p:
+                        if pg_acc[g] == held_p:
                             keep[g] = False
     explained = False
     for g in range(PG):
@@ -813,7 +813,7 @@ def project(z, Z, n_near, segment, dist):
 
 @njit(parallel=True, cache=True)
 def projections(P_lp, P_ls, P_q, Z, best, alt, legal, r, N, LL, log_idle_r, busy, hold, done,
-                pg_obj, pg_dst, M, K, dest, true_dest_r, iscand, site_of, failed_p, vain_p,
+                pg_obj, pg_dst, pg_acc, M, K, dest, true_dest_r, iscand, site_of, failed_p, vain_p,
                 true_tab, pev, psucc, has_social, infer_social, factored, stages, alpha, hand_h,
                 goal_h, social_h, idle_on, idle_h, cond_place, n_near, segment, state_ok,
                 it_k, it_lo, it_hi, k1t, k2t, lamt, rest):
@@ -860,8 +860,8 @@ def projections(P_lp, P_ls, P_q, Z, best, alt, legal, r, N, LL, log_idle_r, busy
                         continue
                     ap = best[k, s] if v == 0 else alt[k, s]
                     q1 = belief_update(P_lp[k], P_ls[k], P_q[k], s, a, ap, r, N, LL,
-                                       log_idle_r, busy, hold, done, pg_obj, pg_dst, M, K,
-                                       dest, true_dest_r, iscand, site_of, failed_p, vain_p,
+                                       log_idle_r, busy, hold, done, pg_obj, pg_dst, pg_acc,
+                                       M, K, dest, true_dest_r, iscand, site_of, failed_p, vain_p,
                                        true_tab, pev, psucc, has_social, infer_social,
                                        factored, stages, alpha, hand_h, goal_h, social_h,
                                        idle_on, idle_h, cond_place, lp_out, ls_out, wp, wl,

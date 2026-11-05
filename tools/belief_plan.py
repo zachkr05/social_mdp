@@ -22,8 +22,25 @@ def arr(x):
     return np.array([np.nan if v is None else v for v in x], dtype=float)
 
 
+# the objects in the model and the candidates (a record's), for the labels: an index past
+# them is the goal-less hypotheses' "none" (Config.goalless_hypotheses, 2026-11-05 night)
+SIZES = {"M": None, "K": None}
+
+
+def obj_name(k: int) -> str:
+    M = SIZES["M"]
+    return "none" if M is not None and k >= M else f"O{k + 1}"
+
+
+def goal_name(h: dict) -> str:
+    M, K = SIZES["M"], SIZES["K"]
+    if (M is not None and h["object"] >= M) or (K is not None and h["destination"] >= K):
+        return "no goal"
+    return f"O{h['object'] + 1}/G{h['destination']}"
+
+
 def fmt_obj(b) -> str:
-    return " ".join(f"O{k + 1} {v:.2f}" for k, v in enumerate(b))
+    return " ".join(f"{obj_name(k)} {v:.2f}" for k, v in enumerate(b))
 
 
 def main() -> None:
@@ -36,6 +53,8 @@ def main() -> None:
                          "robot's belief about which object its partner wants")
     args = ap.parse_args()
     res = load_result(args.record)
+    SIZES["M"] = res["scene"].get("modelled_objects")
+    SIZES["K"] = len(res["scene"].get("candidates", ())) or None
     names = action_names(res)
     if args.story:
         story(res, names)
@@ -70,7 +89,7 @@ def main() -> None:
         if d.get("hypotheses"):
             pred = d.get("partner_prediction") or {}
             print(f"        partner taken to be ({d.get('covered', 1.0):.2f} of the posterior): "
-                  + "; ".join(f"{h['social']} O{h['object'] + 1}/G{h['destination']} "
+                  + "; ".join(f"{h['social']} {goal_name(h)} "
                               f"{h['weight']:.2f}" for h in d["hypotheses"])
                   + ("; predicted " + ", ".join(f"{a} {v:.2f}" for a, v in pred.items())
                      if pred else ""))

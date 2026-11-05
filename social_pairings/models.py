@@ -380,20 +380,47 @@ class SocialMDP:
         # physical goal g.  Known partner objects: robot i's own object to each candidate.
         # Inferred (Config.partner_object): every object to every candidate, g = q K + k.
         self.infer_object = cfg.partner_object == "inferred"
+        # Config.goalless_hypotheses (2026-11-05 night): "no object" (object index M) beside
+        # the objects and "no destination" (destination index K) beside the candidates; the
+        # hypotheses their product, g = q n_dst + k.  n_obj / n_dst: the sizes of the two
+        # posteriors (Config.belief_factored); goal_less[i, g]: hypothesis g of robot i has
+        # nothing to finish (its object M or its destination K).  The world's tables have the
+        # two extra indices (ObjectWorld.rate_cls_x and the like).
+        self.goalless = bool(cfg.goalless_hypotheses)
+        n_dst = K + 1 if self.goalless else K
         if self.infer_object:
-            PG = w.M * K
-            obj = np.repeat(np.arange(w.M, dtype=np.int64), K)
-            dst = np.tile(np.arange(K, dtype=np.int64), w.M)
+            n_obj = w.M + 1 if self.goalless else w.M
+            PG = n_obj * n_dst
+            obj = np.repeat(np.arange(n_obj, dtype=np.int64), n_dst)
+            dst = np.tile(np.arange(n_dst, dtype=np.int64), n_obj)
             self.pg_obj = np.ascontiguousarray(np.stack([obj, obj]))
             self.pg_dst = np.ascontiguousarray(np.stack([dst, dst]))
         else:
-            PG = K
-            self.pg_obj = np.ascontiguousarray(np.stack([np.zeros(K, dtype=np.int64),
-                                                         np.ones(K, dtype=np.int64)]))
-            self.pg_dst = np.ascontiguousarray(np.stack([np.arange(K, dtype=np.int64)] * 2))
+            n_obj = w.M                  # (the partner's own object, known)
+            PG = n_dst
+            self.pg_obj = np.ascontiguousarray(np.stack([np.zeros(n_dst, dtype=np.int64),
+                                                         np.ones(n_dst, dtype=np.int64)]))
+            self.pg_dst = np.ascontiguousarray(np.stack([np.arange(n_dst, dtype=np.int64)] * 2))
         self.PG = PG
-        # each robot's own physical goal: its own object to its destination
-        self.own_goal = tuple(int(i * K + self.goal_ids[i]) if self.infer_object
+        self.n_obj, self.n_dst = int(n_obj), int(n_dst)
+        self.goal_less = np.ascontiguousarray((self.pg_obj >= w.M) | (self.pg_dst >= K))
+        # pg_acc[i, g]: the object hypothesis g of robot i takes as its goal object (handed
+        # over, set down for it) and whose way its reward reads -- its object, or M ("none")
+        # where it is goal-less: a hypothesis (object q, no destination) takes nothing either.
+        # What the hands and the rewards read; pg_obj stays the index of the object's posterior
+        self.pg_acc = np.ascontiguousarray(np.where(self.goal_less, w.M, self.pg_obj))
+        # the one goal-less hypothesis that stands for all of them where a model is solved
+        # under it (every goal-less hypothesis is the same model; -1 without them)
+        self.goalless_rep = tuple(int(np.flatnonzero(self.goal_less[i])[0])
+                                  if self.goal_less[i].any() else -1 for i in (0, 1))
+        # each robot's own physical goal: its own object to its destination -- but a hinderer
+        # without a goal of its own, with the goal-less hypotheses, has none, in its models
+        # and in the world (ObjectWorld.set_goal_less): the goal-less hypothesis
+        self.goal_less_robot = tuple(bool(self.goalless and self.spoiler[i]) for i in (0, 1))
+        if any(self.goal_less_robot):
+            w.set_goal_less(self.goal_less_robot)
+        self.own_goal = tuple(self.goalless_rep[i] if self.goal_less_robot[i]
+                              else int(i * n_dst + self.goal_ids[i]) if self.infer_object
                               else int(self.goal_ids[i]) for i in (0, 1))
         # the memory there is: max_memory_gib, or what this machine has where that is less --
         # a model that cannot fit fails here, before its first table is built, and not by
@@ -433,7 +460,7 @@ class SocialMDP:
             self.log_idle = [np.log(t) for t in self.idle_tab]
         # (the carry table the kernels take where the partner delivers: never read)
         self._no_carry = np.zeros((w.N, N_ACTIONS))
-        self._no_carry_stack = np.zeros((K, w.N, N_ACTIONS))
+        self._no_carry_stack = np.zeros((n_dst, w.N, N_ACTIONS))
 
         # ---- dynamics tables: [o PG + g] fail, [2 PG + o PG + g] success, [4 PG + o PG + g]
         # level 0 -- robot o, physical goal g
@@ -448,7 +475,7 @@ class SocialMDP:
         self.tabs = np.ascontiguousarray(np.stack(tabs))                    # (6PG, B, nEv) i16
         # robot o's level-0 reward table for each object it may want
         self.level0_reward_tabs = {(o, q): w.level0_reward_tab(o, q)
-                                   for o in (0, 1) for q in sorted(set(self.pg_obj[o].tolist()))}
+                                   for o in (0, 1) for q in sorted(set(self.pg_acc[o].tolist()))}
         self.model_tabs = tuple(tabs[:4 * PG])   # the dynamics of every model above level 0
         self._reach_of: dict = {}
         self.useok = np.ascontiguousarray(np.stack([w.hand_ok(False), w.hand_ok(True)]))
@@ -567,8 +594,10 @@ class SocialMDP:
             p_row = L1.G                 # every level-1 slot of robot a shares one row of P
             any_slot = False
             for k in groups:
-                keys = list(hyp_terms) if as_hypotheses else []
                 mine = levels[a] == 1 and k == goal_ids[a]
+                if self.goal_less[a, k] and k != self.goalless_rep[a] and not mine:
+                    continue             # every goal-less hypothesis: the one slot's models
+                keys = list(hyp_terms) if as_hypotheses else []
                 if mine:
                     root_key = self.level1_term(a, self.goals[a])
                     keys.append(root_key)
@@ -749,10 +778,10 @@ class SocialMDP:
         none = np.zeros(0, dtype=np.int64)
         for a in (0, 1):                 # the partner's distribution of each robot's models
             inputs_level0(a, a, none, none, w.N, w.psucc, w.pev, self.level0_reward_tabs[(a, a)],
-                          valid[a], w.busy, w.cls_obj, w.rate_cls, w.cost_c, self.done,
+                          valid[a], w.busy, w.cls_obj_x, w.rate_cls_x, w.cost_c, self.done,
                           everywhere[a][1], everywhere[a][2], L0.P, a,
                           np.zeros((1, 1, N_ACTIONS), dtype=np.float32), no_park, False,
-                          w.at_partner_obj, w.hold, w.dest)
+                          w.at_partner_obj_x, w.hold, w.dest_x)
         order = np.arange(L0.M)
         for g0 in range(0, L0.M, self.batch):
             grp = order[g0:g0 + self.batch]
@@ -760,14 +789,14 @@ class SocialMDP:
             Rg = np.zeros((grp.size, w.S, N_ACTIONS), dtype=np.float32)
             loc = np.arange(grp.size, dtype=np.int64)
             for a in (0, 1):
-                objs = self.pg_obj[a, L0.goal[grp]]
+                objs = self.pg_acc[a, L0.goal[grp]]
                 for q in sorted(set(objs[L0.agent[grp] == a].tolist())):
                     sel = (L0.agent[grp] == a) & (objs == q)
                     inputs_level0(a, int(q), self.pg_dst[a, L0.goal[grp][sel]], loc[sel], w.N,
                                   w.psucc, w.pev, self.level0_reward_tabs[(a, int(q))], valid[a],
-                                  w.busy, w.cls_obj, w.rate_cls, w.cost_c, self.done,
+                                  w.busy, w.cls_obj_x, w.rate_cls_x, w.cost_c, self.done,
                                   everywhere[a][1], everywhere[a][2], L0.P, a, Rg, no_park,
-                                  False, w.at_partner_obj, w.hold, w.dest)
+                                  False, w.at_partner_obj_x, w.hold, w.dest_x)
             Vg = np.stack([w.solo_state_values(int(L0.agent[m]),
                                                int(self.pg_dst[L0.agent[m], L0.goal[m]]),
                                                int(self.pg_obj[L0.agent[m], L0.goal[m]]))
@@ -808,8 +837,10 @@ class SocialMDP:
         for key in sorted(self.slots, key=lambda kk: (kk[1], kk[0], kk[2])):
             slot = self.slots[key]
             a, depth, group = key
-            if (depth == 1 and self.levels[1 - a] == 2
-                    and not np.isfinite(self.about[a].log_phys[group])
+            lp = self.about[a].log_phys
+            alive = (np.isfinite(lp[self.goal_less[a]]).any()   # (the goal-less slot stands
+                     if self.goal_less[a, group] else np.isfinite(lp[group]))   # for them all)
+            if (depth == 1 and self.levels[1 - a] == 2 and not alive
                     and not (self.levels[a] == 1 and group == self.own_goal[a])):
                 continue
             bank = self.bank(depth)
@@ -892,7 +923,10 @@ class SocialMDP:
 
     def hypothesis_row(self, partner: int, k: int, t: int) -> int:
         """Level-1 row of the partner hypothesis (physical goal k, social goal number t of
-        the viewer's hypothesis goals)."""
+        the viewer's hypothesis goals).  Every goal-less k (Config.goalless_hypotheses) is
+        the one model of goalless_rep."""
+        if self.goal_less[partner, k] and (partner, 1, int(k)) not in self.slots:
+            k = self.goalless_rep[partner]
         slot = self.slots[(partner, 1, k)]
         term = self.level1_term(partner, self.hyp_goals[1 - partner][t])
         return int(slot.model_rows[slot.model_keys.index(term)])
@@ -965,16 +999,18 @@ class SocialMDP:
         _, lo, hi = block_items(w.NN, self.reach_of(o, g, int(bank.block[rows[0]])), 0)
         M = rows.size
         common = (o, w.N, w.psucc, w.pev, self.tabs[o * K + g], self.tabs[2 * K + o * K + g],
-                  w.cls_obj, w.at_partner_obj, w.cls_est, w.at_partner_est, w.rate_cls,
-                  w.cost_c, w.site_of, w.goal_at_site, lo, hi)
-        qown, kown = int(self.pg_obj[o, g]), int(self.pg_dst[o, g])
+                  w.cls_obj_x, w.at_partner_obj_x, w.cls_est_x, w.at_partner_est_x,
+                  w.rate_cls_x, w.cost_c, w.site_of, w.goal_at_site, lo, hi)
+        qown, kown = int(self.pg_acc[o, g]), int(self.pg_dst[o, g])
         social_f, zero_f = ((bank.social[rows], bank.zero[rows]) if flags is None
                             else (np.asarray(flags[0], dtype=np.int64),
                                   np.asarray(flags[1], dtype=np.int64)))
-        models = (rows if out is None else np.arange(M, dtype=np.int64), int(g), qown, kown,
+        # (Table I's "same goal": never for a goal-less model -- it has no goal to share)
+        gown = -1 if self.goal_less[o, g] else int(g)
+        models = (rows if out is None else np.arange(M, dtype=np.int64), gown, qown, kown,
                   np.ascontiguousarray(social_f),
                   np.ascontiguousarray(zero_f).astype(np.uint8))
-        goals = (self.pg_obj[p], self.pg_dst[p], self.pg_obj[o], self.pg_dst[o],
+        goals = (self.pg_acc[p], self.pg_dst[p], self.pg_acc[o], self.pg_dst[o],
                  self.infer_object)
         P, p_row, R, pd, ho = ((bank.P, slot.p_row, bank.R, bank.pd, bank.ho) if out is None
                                else out)
@@ -989,7 +1025,7 @@ class SocialMDP:
             return (*common, L0.psi, p * K + np.arange(K), np.arange(K),
                     np.zeros(K, dtype=np.int64), K, 1, b * (1.0 - q), b * q,
                     float(cfg.idle_eps), *valid, w.busy, w.gone, *models, *l1, False, z3, z3,
-                    z2, z2, z1, z1, z1, 0.0, w.fin_cls, self.lead,
+                    z2, z2, z1, z1, z1, 0.0, w.fin_cls_x, self.lead,
                     L0.psi, np.zeros(1, dtype=np.int64), np.ones((K, 1)), np.zeros((K, 1)),
                     False, w.hold, self.done, self._no_carry, False, False,
                     self._no_carry_stack, *goals, P, p_row, R, pd, ho)
@@ -1028,7 +1064,7 @@ class SocialMDP:
                 np.ascontiguousarray(slot.hyp_type), K, n_types, b * (1.0 - q), b * q,
                 float(cfg.idle_eps), *valid, w.busy, w.gone, *models, np.zeros(M), np.zeros(M),
                 np.zeros(M),
-                True, cA, cB, cN, cR, ta1, tb1, tr1, self.cost_in_partner_reward, w.fin_cls,
+                True, cA, cB, cN, cR, ta1, tb1, tr1, self.cost_in_partner_reward, w.fin_cls_x,
                 self.lead, L0.psi, o * K + np.arange(K), nested_belief, nested_idle,
                 bool(cfg.child_conditioning), w.hold, self.done, self._no_carry, False,
                 False, self._no_carry_stack, *goals, P, p_row, R, pd, ho)
@@ -1285,18 +1321,18 @@ class SocialMDP:
                                      np.zeros(N_ACTIONS - PICK)])
                 pl /= pl.sum()
             gl = int(bank.goal[r])
-            obj, dst = int(self.pg_obj[agent, gl]), int(self.pg_dst[agent, gl])
+            obj, dst = int(self.pg_acc[agent, gl]), int(self.pg_dst[agent, gl])
             cg = self.level0_reward_tabs[(agent, obj)][c, ev].astype(np.int64)
             no = n2 // w.N if agent == 0 else n2 % w.N
-            if w.at_partner_obj[:, agent, obj].any():    # held_reward="carrier": the reward
-                no = np.where(w.at_partner_obj[cg, agent, obj] != 0,          # follows the object
+            if w.at_partner_obj_x[:, agent, obj].any():  # held_reward="carrier": the reward
+                no = np.where(w.at_partner_obj_x[cg, agent, obj] != 0,        # follows the object
                               n2 % w.N if agent == 0 else n2 // w.N, no)
             placing = (w.hold[c, agent] == obj) and (w.done[c, agent] == 0)
-            cls = w.cls_obj[cg, agent, obj]
+            cls = w.cls_obj_x[cg, agent, obj]
             if placing:                          # its own set-down: the done reward
                 cls = np.where((np.arange(N_ACTIONS) == PLACE)[:, None]
-                               & (no == int(w.dest[dst])), 0, cls)
-            rew = w.rate_cls[cls, no, dst] - w.cost_c[c, agent][:, None]
+                               & (no == int(w.dest_x[dst])), 0, cls)
+            rew = w.rate_cls_x[cls, no, dst] - w.cost_c[c, agent][:, None]
             q = ((rew + g * v) * pl[None, :]).sum(1)
         else:
             pl = bank.P[bank.p_of[r], s]
@@ -1337,19 +1373,21 @@ class SocialMDP:
         return None if depth == 0 else self.slots[(i, depth, self.own_goal[i])]
 
     def goal_belief(self, i: int) -> np.ndarray:
-        """(K,) robot i's belief about its partner's destination (uniform at level 0)."""
+        """(n_dst,) robot i's belief about its partner's destination (uniform at level 0);
+        with Config.goalless_hypotheses its last entry is "no destination"."""
         if self.levels[i] == 0:
-            return np.full(self.w.K, 1.0 / self.w.K)
+            return np.full(self.n_dst, 1.0 / self.n_dst)
         return np.bincount(self.pg_dst[1 - i], weights=self.about[1 - i].phys(),
-                           minlength=self.w.K)
+                           minlength=self.n_dst)
 
     def object_belief(self, i: int) -> np.ndarray:
-        """(M,) robot i's belief about which object its partner wants (uniform at level 0;
-        with the partner's object known, all of it on the partner's own)."""
+        """(n_obj,) robot i's belief about which object its partner wants (uniform at level
+        0; with the partner's object known, all of it on the partner's own); with
+        Config.goalless_hypotheses its last entry is "no object"."""
         if self.levels[i] == 0:
-            return np.full(self.w.M, 1.0 / self.w.M)
+            return np.full(self.n_obj, 1.0 / self.n_obj)
         return np.bincount(self.pg_obj[1 - i], weights=self.about[1 - i].phys(),
-                           minlength=self.w.M)
+                           minlength=self.n_obj)
 
     def social_belief(self, i: int) -> Optional[np.ndarray]:
         """(len(SOCIAL_GOALS),) a level-2 robot's belief about its partner's social goal
@@ -1502,22 +1540,23 @@ class SocialMDP:
         held_i, held_j = int(w.hold[st[2], i]), int(w.hold[st[2], j])
         done_now = bool(event["done_now"][j])
         if done_now:                                             # (own object, this cell)
-            keep &= (obj == j) & (w.dest[dst] == int(w.true_dest[j]))
+            keep &= (obj == j) & (w.dest_x[dst] == int(w.true_dest[j]))
             return keep
         # robot j's own place of its own object on a candidate cell that did nothing: it is
         # not j's destination (a place that counted is done_now above)
         if (int(actions[j]) == PLACE and held_j == j and int(w.hold[nxt[2], j]) == j
                 and w.iscand[w.site_of[int(nxt[j])]]):
-            keep &= ~((obj == j) & (w.dest[dst] == int(nxt[j])))
+            keep &= ~((obj == j) & (w.dest_x[dst] == int(nxt[j])))
         # robot i's set-down for j that failed: not that object on that cell
         if bool(event["failed"][i]) and held_i >= 0:
-            keep &= ~((obj == held_i) & (w.dest[dst] == int(nxt[i])))
+            keep &= ~((obj == held_i) & (w.dest_x[dst] == int(nxt[i])))
         # robot i's hand-over: robot j took the object (it is j's own), or did not
-        if int(actions[i]) == GIVE and held_i >= 0:
+        if int(actions[i]) == GIVE and held_i >= 0:       # (what each takes: pg_acc --
+            acc = self.pg_acc[j]                             # a goal-less one, nothing)
             if int(w.hold[nxt[2], j]) == held_i:
-                keep &= obj == held_i
+                keep &= acc == held_i
             elif bool(event.get("handed_in_vain", (False, False))[i]):
-                keep &= obj != held_i
+                keep &= acc != held_i
         return keep
 
     def _stage(self, j: int, s: int) -> bool:
@@ -1576,8 +1615,8 @@ class SocialMDP:
         marginal of the (object, destination) belief ``log_phys`` (PG,), in logs, -inf where
         nothing is left.  With the partner's object known, the object's is all on its own."""
         obj, dst = self.pg_obj[j], self.pg_dst[j]
-        lo = np.full(self.w.M, -np.inf)
-        ld = np.full(self.w.K, -np.inf)
+        lo = np.full(self.n_obj, -np.inf)
+        ld = np.full(self.n_dst, -np.inf)
         for q in np.unique(obj):
             lo[q] = _log_sum(log_phys[obj == q])
         for d in np.unique(dst):
@@ -1727,10 +1766,10 @@ class SocialMDP:
         if post is not None:                     # this transition's evidence, in its stage
             k = int(win.updates)
             if empty or not stages:
-                objects = (objects + ((k, _group_log_lik(post, hard, obj, self.w.M)),))[-n:]
+                objects = (objects + ((k, _group_log_lik(post, hard, obj, self.n_obj)),))[-n:]
             if not empty or not stages:
                 destinations = (destinations
-                                + ((k, _group_log_lik(post, hard, dst, self.w.K)),))[-n:]
+                                + ((k, _group_log_lik(post, hard, dst, self.n_dst)),))[-n:]
         lo0, ld0 = self.factors(j, np.full(self.PG, -np.log(self.PG)))   # the uniform prior
         lo = lo0 + alpha * np.sum([v for _, v in objects], axis=0) if objects else lo0
         ld = ld0 + alpha * np.sum([v for _, v in destinations], axis=0) if destinations else ld0
@@ -1994,8 +2033,8 @@ class SocialMDP:
         lo, ld = self.factors(j, prior)
         obj, dst = self.pg_obj[j], self.pg_dst[j]
         out = {}
-        for name, n, own, other, w_other in (("by_destination", self.w.K, dst, obj, lo),
-                                             ("by_object", self.w.M, obj, dst, ld)):
+        for name, n, own, other, w_other in (("by_destination", self.n_dst, dst, obj, lo),
+                                             ("by_object", self.n_obj, obj, dst, ld)):
             lik, lik_idle = np.full(n, -np.inf), np.full(n, -np.inf)
             with np.errstate(invalid="ignore"):
                 for v in np.unique(own):
@@ -2092,7 +2131,8 @@ class SocialMDP:
                     rk += c1 * (rj[h] + self.lead * (rj[h] - float(seen.sum())))
                 else:                            # ... or behind where it takes it as done
                     rk -= c1 * float(seen[fin_est].sum())
-            al, be, nu, race_i = self.level2_term(i, goal, t, k == self.own_goal[i])
+            same = k == self.own_goal[i] and not self.goal_less[p, k]   # (goal-less: no goal)
+            al, be, nu, race_i = self.level2_term(i, goal, t, same)
             term = al * rk + be * own + nu * rj[h]
             if race_i != 0.0:                    # its own race term, on the goal rewards
                 if fin_i[self.own_goal[i]]:

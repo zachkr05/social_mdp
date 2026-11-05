@@ -38,7 +38,8 @@
 # the hypotheses, the weights, the predicted and the actual move of the hinderer:
 #     python3 tools/belief_plan.py output/<folder>/hinder__coercion__inferred.json
 # Environment: PY (python3), THREADS, WORLDS ("default guard"; also decoy), PARTNERS ("inferred oracle"),
-# STEPS (60), NOVIDEO (0), INFERENCE (level1 | level2), EXTRA (more flags for every rollout).
+# STEPS (60), NOVIDEO (0), INFERENCE (level1 | level2), PLANNERS ("coercion hinder" | coercion),
+# NOGOAL (1 | 0), EXTRA (more flags for every rollout).
 cd "$(dirname "$0")" || exit 1
 PY=${PY:-python3}
 NCPU=$(nproc 2>/dev/null || echo 4)
@@ -54,7 +55,13 @@ fi
 FLAGS="--levels 2 2 --objects inferred --swap --steal --foreign-carry-cost 1 --inertia 1 --pick-cost 2"
 FLAGS="$FLAGS --temperature 0.2 --pairing hinder coercion --steps ${STEPS:-60}"
 FLAGS="$FLAGS --objective task --belief-planning updated --verbose --resume"
-[ -n "$INFERENCE" ] && FLAGS="$FLAGS --belief-inference $INFERENCE"   # level2: a level-3 coercer
+[ -n "$INFERENCE" ] && FLAGS="$FLAGS --belief-inference $INFERENCE"   # level2: level-3 planners
+# who plans (2026-11-05 night): both, by default -- the hinderer a level-3 agent too with
+# INFERENCE=level2 (folders _bph); PLANNERS=coercion for the coercer alone
+[ -n "$PLANNERS" ] && FLAGS="$FLAGS --belief-planning-goals $PLANNERS"
+# the goal-less hypotheses ("no object", "no destination") are on by default (folders
+# _nogoal); NOGOAL=0 for the paper's hypothesis space
+[ "${NOGOAL:-1}" = 0 ] && FLAGS="$FLAGS --no-goalless"
 [ "${NOVIDEO:-0}" = 1 ] && FLAGS="$FLAGS --no-video"
 LOGS=logs/belief_partner
 mkdir -p "$LOGS"

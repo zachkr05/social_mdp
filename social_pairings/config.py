@@ -118,6 +118,7 @@ ADDED_FIELDS = dict(
     belief_partner_mass=0.05,
     belief_partner_max=4,
     belief_inference="level1",     # 2026-11-05 (evening; Eqs. 5-6 on the partner's level-1 models)
+    goalless_hypotheses=False,     # 2026-11-05 (night; every hypothesis had an object and a cell)
     steal_robots=(True, True),     # 2026-11-05 (both robots took, with steal)
     forced_actions=(),             # 2026-11-05 (nothing forced)
 )
@@ -692,6 +693,15 @@ class Config:
     # physical_likelihood="level1", no belief_window and the partner at level 2.  Folders
     # ..._bplan<frozen|updated>.
     belief_planning: str = "off"
+    # The robots that plan so (2026-11-05 night, the hinderer added; the user: "We may also
+    # want to make a hindering agent level 3 so its able to understand the social much
+    # better.  Lets go ahead and implement those"): with belief_inference="level2" each of
+    # them is a level-3 agent -- it reads its partner by the partner's level-2 models and
+    # predicts it by them in its plan.  A hinderer without a goal of its own plans for
+    # -w r(g_j) under each hypothesis about its partner's goals.  The package's default,
+    # ("coercion",), is the coercer alone (the tests' rollouts with it); the runs plan for
+    # both (run_object_inference.py: folders _bph; --belief-planning-goals coercion for the
+    # coercer alone).
     belief_planning_goals: tuple = ("coercion",)
     belief_horizon: int = 40
     belief_points: int = 40
@@ -753,6 +763,22 @@ class Config:
     # hypothesis the posteriors hold possible is re-solved every transition (~84 level-2
     # solves of the partner on the two-room scene).  Folders ..._binf2.
     belief_inference: str = "level1"
+    # Goal-less physical hypotheses (2026-11-05 night; the user: "I think the problem is that
+    # we are trying to model hinder, but hinder has no goal.  I think we should add in the goal
+    # posterior and object posterior no object and no destination").  The posterior about the
+    # partner's object holds "no object" beside the objects, the one about its destination "no
+    # destination" beside the candidates; the physical hypotheses are their product, (M + 1)
+    # (K + 1) of them (K + 1 with the partner's object known), g = q (K + 1) + k, the
+    # goal-less ones those with q = M or k = K.  A goal-less hypothesis has nothing to finish:
+    # no goal reward anywhere (its level-0 model has only its costs, so it stays), never
+    # done, no object taken as its goal (handed over or set down for it) -- every one of them
+    # the same model, under any social goal (a goal-less hinderer: -w r(g_j) alone).  Eq. 5's
+    # transition term rules them out where the partner finishes a goal.  The paper's
+    # hypothesis space has an object and a destination in every hypothesis; the package's
+    # default keeps it (and the tests' brute-force references with it); the runs turn it on
+    # (run_object_inference.py: folders ..._nogoal, --no-goalless for the paper's).  Not with
+    # physical_likelihood="cut" (its subgoals read the destination's cell).
+    goalless_hypotheses: bool = False
     # The first transitions' joint actions, forced (2026-11-05; "the first 20 transitions as
     # before"): a history to start from -- e.g. the first 20 transitions of a rollout in which
     # the hinderer took the coercer's object -- the robots watching it and updating their
@@ -1002,6 +1028,9 @@ class Config:
         _one_of(self, "belief_tail", ("frozen", "cap"))
         _one_of(self, "belief_partner", ("inferred", "oracle"))
         _one_of(self, "belief_inference", ("level1", "level2"))
+        if self.goalless_hypotheses and self.physical_likelihood == "cut":
+            raise ValueError('goalless_hypotheses: not with physical_likelihood="cut" (its '
+                             'subgoals read the destination\'s cell)')
         if self.belief_inference == "level2":
             if self.belief_planning == "off":
                 raise ValueError('belief_inference="level2" is the belief planner\'s (the '

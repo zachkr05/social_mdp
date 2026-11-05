@@ -2496,6 +2496,42 @@ its next choice uses that.
   solves and seconds per transition), the decision's own hypotheses not twice. Folders
   `..._binf2`; `run_belief_partner.sh`, `run_belief_2x2.sh` and `run_belief_scenes.sh` take
   `INFERENCE=level2`.
+* *A level-3 hinderer* (`Config.belief_planning_goals`, `--belief-planning-goals`; the user,
+  2026-11-05 night: "We may also want to make a hindering agent level 3 so its able to
+  understand the social much better"). The runs plan for both robots (`coercion hinder`, the
+  default of `run_object_inference.py`, folders `..._bph`): the hinderer plans over the
+  coercer's belief about it as the coercer does, under the hypotheses its own posteriors hold
+  about the coercer, paid $-w\,r(g_j)$ under each; with `--belief-inference level2` it reads
+  the coercer by the coercer's level-2 models too -- two level-3 agents, each predicting the
+  other at level 2. The package's default is the coercer alone (`("coercion",)`, the tests'
+  rollouts); `--belief-planning-goals coercion` gives the runs of before.
+* *Goal-less hypotheses* (`Config.goalless_hypotheses`, `--no-goalless`; the user, 2026-11-05
+  night: "I think the problem is that we are trying to model hinder, but hinder has no goal.
+  I think we should add in the goal posterior and object posterior no object and no
+  destination"). The first level-3 runs: at transition 11 of the default world the hinderer
+  held the coercer's block next to the coercer and stood still, sure the coercer would not
+  take it -- its level-1 model of the coercer reasons with the coercer's belief about the
+  hinderer, and that belief, holding no hypothesis without a goal, took the hinderer for a
+  robot carrying the block to some destination, which a take cannot catch (it steps away);
+  the coercer took the block and delivered at 13. Now the posterior about the partner's
+  object holds "no object" (index M) and the one about its destination "no destination"
+  (index K); the physical hypotheses are their product, $(M+1)(K+1)$ (21 on the two-room
+  scene), the goal-less ones those with either. A goal-less hypothesis has nothing to
+  finish: no goal reward (the world's `rate_cls_x` / `fin_cls_x` / `cls_obj_x` / `cls_est_x`
+  have the extra indices, reward 0 and never finished), never done, no object taken as its
+  goal (`SocialMDP.pg_acc`: M) -- so its level-0 model stays, and every goal-less hypothesis
+  is one model (`goalless_rep`: one level-1 slot per robot, 182 level-1 models on the
+  two-room scene instead of 294; the belief planner and the level-2 read solve it once per
+  social goal). Under any social goal: a goal-less hinderer is $-w\,r(g_j)$ alone, a
+  goal-less cooperator helps, a goal-less robot without a social goal waits (as the idle mode
+  does: the two compete for the same evidence). Eq. 5's transition term rules them out where
+  the partner finishes a goal or takes a handed-over object as its own. The uniform prior
+  puts $1 - MK/((M+1)(K+1))$ on them (9/21 on the two-room scene). A hinderer without a goal
+  of its own has none in its own models and in the world either
+  (`ObjectWorld.set_goal_less`: no site finishes it, it takes nothing handed to it as its
+  goal; its hands pick, put back, swap, take and give as before). The package's default is
+  the paper's space (the tests' brute-force references); the runs turn it on (folders
+  `..._nogoal`). Not with `physical_likelihood="cut"`.
 * *The beliefs*: at most `belief_points` (40) belief points -- the partner's belief now
   (point 0, exact), those it would form if the robot acted by each hypothesis it holds about
   it (the robot's level-1 models, most likely action: probes), and those along the planned

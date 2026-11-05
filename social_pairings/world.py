@@ -479,6 +479,27 @@ class ObjectWorld:
             elif key[0] == "hold" and self.auto:
                 fin[c] = self.d_goal_by[key[1]].T == 0
         self.fin_cls = np.ascontiguousarray(fin)
+        # The goal-less hypotheses (Config.goalless_hypotheses, 2026-11-05 night; the user: "we
+        # are trying to model hinder, but hinder has no goal ... add in the goal posterior and
+        # object posterior no object and no destination"): the tables the models read by a
+        # hypothesis's object and destination, one index more each -- object M, "no object"
+        # (the class of no way: reward 0, never finished, whatever the block) and destination
+        # K, "no destination" (reward 0, never finished, whatever the class); its cell -1 and
+        # its site 0 (no special cell).  The world's own tables stay as they are.
+        self.rate_cls_x = np.ascontiguousarray(np.concatenate(
+            [self.rate_cls, np.zeros((self.ncls, N, 1))], axis=2))
+        self.fin_cls_x = np.ascontiguousarray(np.concatenate(
+            [self.fin_cls, np.zeros((self.ncls, N, 1), dtype=np.uint8)], axis=2))
+        none_cls = np.full((B, 2, 1), self.zero_cls, dtype=np.int64)
+        none_at = np.zeros((B, 2, 1), dtype=np.uint8)
+        self.cls_obj_x = np.ascontiguousarray(np.concatenate([self.cls_obj, none_cls], axis=2))
+        self.cls_est_x = np.ascontiguousarray(np.concatenate([self.cls_est, none_cls], axis=2))
+        self.at_partner_obj_x = np.ascontiguousarray(
+            np.concatenate([self.at_partner_obj, none_at], axis=2))
+        self.at_partner_est_x = np.ascontiguousarray(
+            np.concatenate([self.at_partner_est, none_at], axis=2))
+        self.dest_x = np.ascontiguousarray(np.append(self.dest, -1).astype(np.int64))  # (K+1,)
+        self.dest_site_x = np.ascontiguousarray(np.append(self.dest_site, 0).astype(np.int64))
         # action costs: the moves and "stay" (Config.costs), pick (pick_cost_rate: on the
         # first transition of a lift, the rest free), place / take / give / swap
         # (use_cost_rate); a move with a foreign object in hand costs more (carry)
@@ -501,6 +522,10 @@ class ObjectWorld:
             gs = [int(self.site_of[d]) for d in self.true_dest]
         self.true_tab = self._table(tuple(gs), (gs[1], gs[0]), own, both)
         self.success_tab = self._table(tuple(gs), (-2, -2), own, both)
+        # each robot's goal in the world: the site it finishes on and the object it takes as
+        # its goal (set_goal_less: a hinderer without a goal of its own has neither)
+        self.true_gs, self.true_acc = tuple(int(g) for g in gs), (0, 1)
+        self.goal_less_robots = (False, False)
         st = np.zeros(M, dtype=np.int64)
         dn0 = np.zeros(2, dtype=np.int64)
         hands_step(st, dn0, self.site_of[self.start], np.zeros(2, dtype=np.int64), False,
@@ -554,10 +579,14 @@ class ObjectWorld:
         partner takes no object handed over or set down for it, in the table of success it
         takes any -- the solver mixes them by the belief that the object (and the cell) is
         the partner's; the partner neither takes an object on arriving nor picks one first
-        (both depend on its object).  Robot o's own goal object is ``obj``."""
-        q = o if obj is None else int(obj)
+        (both depend on its object).  Robot o's own goal object is ``obj``.
+
+        A goal-less hypothesis (``Config.goalless_hypotheses``): ``goal`` K (no destination)
+        or ``obj`` M (no object) -- either way robot o has nothing to finish: no site to set
+        down on for itself (site 0), no goal object (-1: it takes nothing as its goal)."""
+        q, goal = self._goal_less(o, goal, obj)
         g = [0, 0]
-        g[o] = int(self.dest_site[goal])
+        g[o] = int(self.dest_site_x[goal])
         # without the automatic hands the partner finishes by placing what it holds on a
         # candidate cell: on any, in this table, which does not know its destination -- under
         # each hypothesis about it its policy places only on that hypothesis's destination
@@ -568,18 +597,32 @@ class ObjectWorld:
         d[o] = -2 if success else 0
         d[1 - o] = g[o]                              # the partner setting down for o's goal
         if not self.infer_object:
+            if q < 0:                                # goal-less: it takes nothing as its goal
+                own = [0, 1]
+                own[o] = -1
+                return self._table(g, d, tuple(own), (True, True), tuple(own), tuple(own))
             return self._table(g, d, (0, 1), (True, True))
         own, acc = [-1, -1], [-1, -1]
         own[o] = acc[o] = q
         acc[1 - o] = -2 if success else -1
         return self._table(g, d, own, (True, True), own, acc)
 
+    def _goal_less(self, o: int, goal: int, obj) -> tuple:
+        """(goal object, destination) of robot o's hypothesis (its own object unless ``obj``
+        is given) -- a goal-less one (destination K or object M, ``Config.
+        goalless_hypotheses``) as (-1, K): no goal object, no destination."""
+        q = o if obj is None else int(obj)
+        if q >= self.M or int(goal) >= self.K:
+            return -1, self.K
+        return q, int(goal)
+
     def level0_tab(self, o: int, goal: int, obj: int = None) -> np.ndarray:
         """Dynamics of robot o's level-0 model (goal object `obj`, its own unless given):
-        its partner is a moving obstacle whose hands do nothing."""
-        q = o if obj is None else int(obj)
+        its partner is a moving obstacle whose hands do nothing.  Goal-less (destination K
+        or object M): nothing to finish (:meth:`model_tab`)."""
+        q, goal = self._goal_less(o, goal, obj)
         g = [0, 0]
-        g[o] = int(self.dest_site[goal])
+        g[o] = int(self.dest_site_x[goal])
         own = [-1, -1]
         own[o] = q
         use = [False, False]
@@ -594,8 +637,10 @@ class ObjectWorld:
         """Robot o's level-0 dynamics without its own set-down (goal object `obj`, its own
         unless given): the table its level-0 reward inputs read for every destination at
         once (an immediate reward is the same whether the object is held on the destination
-        or set down there: remaining distance 0 either way)."""
+        or set down there: remaining distance 0 either way).  ``obj`` M: no object."""
         q = o if obj is None else int(obj)
+        if q >= self.M:
+            q = -1
         own = [-1, -1]
         own[o] = q
         use = [False, False]
@@ -712,25 +757,26 @@ class ObjectWorld:
     def goal_rates(self, state, agent: int, objs, goals, estimate: bool = False) -> np.ndarray:
         """Robot `agent`'s reward rate at `state` for each physical goal (objs[n] to
         candidate goals[n]).  estimate: as its partner estimates it in the robot's own model
-        (``cls_est``)."""
+        (``cls_est``).  Object M / destination K: goal-less, rate 0 (the _x tables)."""
         b = state[2]
         objs, goals = np.asarray(objs, dtype=np.int64), np.asarray(goals, dtype=np.int64)
-        cls, at_partner = ((self.cls_est, self.at_partner_est) if estimate
-                           else (self.cls_obj, self.at_partner_obj))
+        cls, at_partner = ((self.cls_est_x, self.at_partner_est_x) if estimate
+                           else (self.cls_obj_x, self.at_partner_obj_x))
         at = np.where(at_partner[b, agent, objs] != 0, state[1 - agent], state[agent])
-        return self.rate_cls[cls[b, agent, objs], at, goals]
+        return self.rate_cls_x[cls[b, agent, objs], at, goals]
 
     def goals_finished(self, state, agent: int, objs, goals,
                        estimate: bool = False) -> np.ndarray:
         """Is robot `agent`'s goal finished at `state`, for each physical goal (objs[n] to
         candidate goals[n]): done, or the robot holding that object on that destination.
-        estimate: as its partner estimates it in the robot's own model (``cls_est``)."""
+        estimate: as its partner estimates it in the robot's own model (``cls_est``).
+        Object M / destination K: goal-less, never finished (the _x tables)."""
         b = state[2]
         objs, goals = np.asarray(objs, dtype=np.int64), np.asarray(goals, dtype=np.int64)
-        cls, at_partner = ((self.cls_est, self.at_partner_est) if estimate
-                           else (self.cls_obj, self.at_partner_obj))
+        cls, at_partner = ((self.cls_est_x, self.at_partner_est_x) if estimate
+                           else (self.cls_obj_x, self.at_partner_obj_x))
         at = np.where(at_partner[b, agent, objs] != 0, state[1 - agent], state[agent])
-        return self.fin_cls[cls[b, agent, objs], at, goals] != 0
+        return self.fin_cls_x[cls[b, agent, objs], at, goals] != 0
 
     def finished(self, state, agent: int) -> np.ndarray:
         """(K,) bool: is robot `agent`'s goal finished at `state`, for every candidate
@@ -761,6 +807,22 @@ class ObjectWorld:
     def satisfied(self, state, agent: int) -> bool:
         return bool(self.done[state[2], agent])
 
+    def set_goal_less(self, robots) -> None:
+        """``Config.goalless_hypotheses`` (2026-11-05 night) with a hinderer without a goal
+        of its own: robot i (``robots[i]``) has no goal in the world either -- no site that
+        finishes it (0), no object it takes as its goal, handed over or set down for it (-1),
+        none it takes on arriving (the automatic hands).  Its hands still pick, put back,
+        swap, take and give as before.  The true tables are rebuilt; ``real_step`` reads
+        ``true_gs`` / ``true_acc``."""
+        self.goal_less_robots = tuple(bool(x) for x in robots)
+        gs = tuple(0 if self.goal_less_robots[i] else int(self.site_of[d])
+                   for i, d in enumerate(self.true_dest))
+        acc = tuple(-1 if self.goal_less_robots[i] else i for i in (0, 1))
+        self.true_gs, self.true_acc = gs, acc
+        both = (True, True)
+        self.true_tab = self._table(gs, (gs[1], gs[0]), acc, both, acc, acc)
+        self.success_tab = self._table(gs, (-2, -2), acc, both, acc, acc)
+
     def real_step(self, status, done, state, nxt, act, detail: bool = False):
         """The hands rule applied to the real objects for one transition: -> (statuses,
         done flags, failed) with failed[i] = robot i tried to set an object down for its
@@ -776,11 +838,11 @@ class ObjectWorld:
                         else HOW_HAND + act[i] - PICK if act[i] >= PICK else BLOCKED
                         for i in (0, 1)], dtype=np.int64)
         adj = bool(np.abs(self.cells[cells[0]] - self.cells[cells[1]]).sum() == 1)
-        gs = np.array([self.site_of[d] for d in self.true_dest], dtype=np.int64)
-        own = np.array([0, 1], dtype=np.int64)
+        gs = np.array(self.true_gs, dtype=np.int64)      # (set_goal_less: site 0, object
+        own = np.array(self.true_acc, dtype=np.int64)    # -1 for a robot without a goal)
         use = np.array([True, True])
 
-        def run(dsite, acc=(0, 1), steal=self.steal_mask):
+        def run(dsite, acc=self.true_acc, steal=self.steal_mask):
             st = np.array(status, dtype=np.int64)
             dn = np.array(done, dtype=np.int64)
             hands_step(st, dn, site, how, adj, self.home_site, gs,
@@ -798,7 +860,7 @@ class ObjectWorld:
             # whatever the object: a set-down that changes the partner's done flag, or a
             # hand-over (a robot that knows its partner's object offers no other)
             anywhere = (-2 if i == 0 else gs[1], -2 if i == 1 else gs[0])
-            taken = run(anywhere, tuple(-2 if r == 1 - i else r for r in (0, 1)))
+            taken = run(anywhere, tuple(-2 if r == 1 - i else self.true_acc[r] for r in (0, 1)))
             failed.append(taken != real and taken[1] != real[1])
             handed.append(taken != real and taken[1] == real[1])
         if detail:
@@ -912,8 +974,17 @@ class ObjectWorld:
     def solo(self, r: int, goal: int, obj: int = None) -> dict:
         """Robot r alone with destination `goal` (and goal object `obj`, its own unless
         given): {"V" (B, N) exact value, "steps" from the start (-1: its optimum parks
-        instead of finishing), "td" (lo, hi)}."""
+        instead of finishing), "td" (lo, hi)}.  A goal-less hypothesis (destination K or
+        object M, ``Config.goalless_hypotheses``): nothing to finish, the least cost forever
+        (staying), never finishing (steps -1)."""
         q = r if obj is None else int(obj)
+        if q >= self.M or int(goal) >= self.K:
+            key = (int(r), "goal-less")
+            if key not in self._solo:
+                v = -float(self.cfg.costs[WAIT]) / (1.0 - self.cfg.gamma)
+                self._solo[key] = dict(V=np.full((self.B, self.N), v), steps=-1,
+                                       td=(0.0, 0.0), sweeps=0)
+            return self._solo[key]
         key = (int(r), int(goal)) if q == r else (int(r), int(goal), q)
         if key not in self._solo:
             cfg = self.cfg
