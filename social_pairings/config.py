@@ -99,6 +99,9 @@ ADDED_FIELDS = dict(
     feint_margin=0.0,
     feint_min_shift=0.01,
     feint_cooldown=10,
+    feint_lure=True,               # 2026-11-04 (late evening; the option ended at the decoy)
+    feint_lag=1.0,
+    feint_wait=3,
 )
 
 
@@ -602,12 +605,22 @@ class Config:
     # feint_min_shift the end is valued by the plan as it is (no second solve).  After an
     # option, feint_cooldown transitions before the next.  No reward added (the document's
     # kappa = 0).  Needs the partner's object inferred and picking by hand.  Folders
-    # ..._feint.
+    # ..._feint.  The option, once taken (since the evening of 2026-11-04; the user: "Yes
+    # fully implement this"): to the decoy and lift it; with feint_lure, carry it toward the
+    # candidate destination farthest from the robot's route and wait there, until the
+    # robot's object lies free and the partner cannot reach any cell of the robot's way back
+    # (the object's cell, then its destination) before it does, the partner given
+    # feint_lag transitions to react; then carry the decoy to the object, swap the two, and
+    # deliver.  Every phase has its own limit.  On the way, where the partner stands on the
+    # next cell the robot waits for it up to feint_wait transitions before going round.
     decoy_feint: bool = False
     feint_goals: tuple = ("coercion",)
     feint_margin: float = 0.0
     feint_min_shift: float = 0.01
     feint_cooldown: int = 10
+    feint_lure: bool = True
+    feint_lag: float = 1.0
+    feint_wait: int = 3
     # Everything the belief update computes, in the record (2026-11-04; the user: "just have
     # it put all diagnostics into the json file. All information for belief calculation
     # should be in the JSOn", and "Lets also add these to logs: Q_{d,xi}(s_t, a_t),
@@ -833,6 +846,13 @@ class Config:
             raise ValueError("feint_cooldown must be an int >= 0")
         if self.decoy_feint and self.automatic_hands:
             raise ValueError("decoy_feint needs picking by hand (automatic_hands=False)")
+        if not isinstance(self.feint_lure, (bool, np.bool_)):
+            raise ValueError("feint_lure must be True or False")
+        if not (np.isfinite(self.feint_lag) and self.feint_lag >= 0.0):
+            raise ValueError("feint_lag must be a number >= 0")
+        if (isinstance(self.feint_wait, (bool, np.bool_))
+                or not isinstance(self.feint_wait, (int, np.integer)) or self.feint_wait < 0):
+            raise ValueError("feint_wait must be an int >= 0")
         for name in ("park_eps", "idle_eps"):
             if not 0.0 <= getattr(self, name) < 1.0:
                 raise ValueError(f"{name} must lie in [0, 1)")

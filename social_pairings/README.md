@@ -2325,15 +2325,23 @@ document's finite-lookahead form, for one option -- the decoy:
 - **the choice**: the option's discounted return (its steps' expected rewards, then the
   end's value) against $\max_a Q(s, a)$ of the plan as it is; taken where it wins by more
   than `feint_margin` (0);
-- **following it**, in three phases: to the decoy and lift it, even where the partner lets
-  go of the robot's object meanwhile; hold it while the partner still holds the object (the
-  planner's moves, nothing let go of); the object lying free, carry the decoy to it and
-  swap the two (`swap_on_place`: the decoy stays on that cell, the object comes into the
-  robot's hands), after which the planner delivers it. The decoy stays in hand until the
-  swap because with hands full the partner's belief about the robot's object does not move
-  (the posteriors' stages): walking back empty-handed is what gives the robot away. It ends
-  early where it no longer makes sense (the decoy taken or lost, the robot's object free and
-  nearer to the robot than to the partner, or too long).
+- **following it**, in four phases, each with its own limit: *to the decoy* -- walk to it
+  and lift it, whatever the partner does meanwhile; *luring* (`feint_lure`) -- carry it
+  toward the candidate destination from which a guard would need the most moves back to
+  the robot's route, and wait there, until the robot's object lies free and the partner
+  cannot reach any cell of the way back (the object's cell, then the robot's destination)
+  before the robot does, given `feint_lag` (1) transitions to react; *to its object* --
+  carry the decoy there and swap the two (`swap_on_place`: the decoy stays on that cell,
+  the object comes into the robot's hands); *delivering* -- carry the object to the robot's
+  destination and set it down. The decoy stays in hand until the swap because with hands
+  full the partner's belief about the robot's object does not move (the posteriors'
+  stages): walking back empty-handed is what gives the robot away. On the way the robot
+  takes the shortest way and, where the partner stands on its next cell, waits for it up to
+  `feint_wait` (3) transitions before going round (going round a moving partner every
+  transition sent it the long way). It ends early where it no longer makes sense (the decoy
+  taken or lost, the robot's object free and nearer to the robot than to the partner, the
+  object taken back twice). The record's `feint.steps`: every transition of an option, its
+  phase, action and the head start.
 
 No reward is added (the document's $\kappa = 0$: the decoy has to earn its value through
 the real task). Left out: the partner's belief moving again after the option (the plan's
@@ -2363,6 +2371,16 @@ of the decoy; the coercer turned back empty-handed, the hinderer read it at once
 0.09 -> 0.01) and guarded the object two moves from it, the coercer four (a pillar between),
 and both waited to the deadlock at 58 (the user: "Why does it just stop after coercing it
 both of them just stop moving"). Hence the phases above, and the guarded trigger.
+
+The second version (lift, hold, swap) on the same run: the hinderer put the object back at
+26, the coercer lifted the decoy at 30 and the hinderer followed it into the other room,
+believing the coercer wanted it (1.00 to the end); but walking back holding the decoy told
+the hinderer where the coercer delivers (its belief in that destination 0.17 -> 0.96 at
+43), the option's clock -- started at transition 3 inside the forced history by the guarded
+trigger -- ran out at 42, and from 46 the hinderer stood on the cell next to the destination
+while the coercer, on its object's place with the decoy, waited (stay 333.2, swap 332.5;
+the hinderer: take -70.0 against its best -63.8, as blocking already stopped the coercer).
+Hence the lure, the head start, the waiting and the clocks per phase.
 
 ## The belief update's workings in the record (since 2026-11-04)
 
@@ -4292,7 +4310,7 @@ every mix of levels ("Results").
 | `likelihood_power` | `1` | a tempered update: each posterior about the partner multiplied by its likelihood ^ $\alpha$ (the learning factor's, after the idle mode's mix; Eq. 5's), every observation counting $\alpha$ of itself ("A softer likelihood"; since 2026-11-04). 1: Bayes' rule. Folders `..._lpow<ALPHA>` |
 | `option_temperature`, `option_detour`, `option_start`, `option_switch`, `option_keepaway_end` | `0.5`, `log 2`, `0.05`, `0.02`, `0.2` | the partner's subgoals under `physical_likelihood="cut"`: their policies' temperature (x c(move)), a new subgoal's prior falling by $e^{-\lambda}$ per extra move, the probabilities per transition that a subgoal starts, is interrupted, that keeping away ends ("The partner's subgoals"; since 2026-11-04). Folders `..._optT`, `_optD`, `_optS`, `_optI` where set |
 | `belief_window` | `0` | a window on the evidence: each of the two physical posteriors from the uniform prior and the likelihoods of the last $n$ transitions of its own stage only -- the object's with the partner's hands empty, the destination's holding an object; what the hands' outcomes ruled out stays out; the goal hazard a floor ("A window on the evidence"; since 2026-11-04). 0: the whole past, Bayes' rule. Needs `belief_factored`, no `hand_hazard`. Folders `..._window<N>` |
-| `decoy_feint`, `feint_goals`, `feint_margin`, `feint_min_shift`, `feint_cooldown` | `False`, `("coercion",)`, `0.0`, `0.01`, `10` | a decoy feint: a level-2 robot of one of `feint_goals` whose partner holds its object looks ahead at lifting another object with the partner's own belief update fed each step, values the end with every model re-solved at the belief the partner would then hold, and takes the option where it beats its plan by more than `feint_margin` ("A decoy feint"; since 2026-11-04). Needs the partner's object inferred and picking by hand; twice the memory. Folders `..._feint` |
+| `decoy_feint`, `feint_goals`, `feint_margin`, `feint_min_shift`, `feint_cooldown`, `feint_lure`, `feint_lag`, `feint_wait` | `False`, `("coercion",)`, `0.0`, `0.01`, `10`, `True`, `1.0`, `3` | a decoy feint: a level-2 robot of one of `feint_goals` whose partner holds its object looks ahead at lifting another object with the partner's own belief update fed each step, values the end with every model re-solved at the belief the partner would then hold, and takes the option where it beats its plan by more than `feint_margin` ("A decoy feint"; since 2026-11-04). Needs the partner's object inferred and picking by hand; twice the memory. Folders `..._feint` |
 | `belief_detail` | `True` | every step's belief update in the record, trace `belief_update`: every hypothesis model's Q and what it made of the action, Eqs. 5-6's likelihoods per hypothesis, destination and object, the beliefs before and after ("The belief update's workings in the record"; since 2026-11-04; `tools/belief_step.py` prints a step). Not part of the model: `--resume` keeps a record made without it. `False` (`--no-belief-detail`, `NODETAIL=1`): the record of before |
 | `partner_delivers`, `partner_parks`, `partner_observed`, `social_belief`, `child_conditioning` | `False`, `False`, `"action"`, `"marginals"`, `False` | the devices of before 2026-10-30, gone: the carry and park tables, the "outcome" observation, the joint posterior, the conditioning of the partner's estimate on the robot's action inside $\tilde R_j$. Kept only so that the records of before can be read; `Config` raises on any other value (`BELIEF_DEVICES`). (The lapse and the belief temperature of then are options again: above) |
 | `exchange_share` | `0.25` | $n$ of the exchange row |

@@ -65,7 +65,7 @@ from typing import Optional
 import numpy as np
 
 from . import goals as G
-from .constants import GIVE, HELD0, HELD1, HOME, PICK, PLACE, SWAP, WAIT
+from .constants import HELD0, HELD1, HOME, PICK, PLACE, SWAP, WAIT
 
 __all__ = ["DecoyFeint"]
 
@@ -98,14 +98,17 @@ class DecoyFeint:
         self.option = {0: None, 1: None}       # the option being followed
         self.ended = {0: None, 1: None}        # transition of the last option's end
         self.log: list = []                    # every evaluation
-        self.events: list = []                 # (transition, robot, "begun"/"ended", ...)
+        self.events: list = []                 # (transition, robot, "begun"/phase/"ended", ...)
+        self.steps: list = []                  # (transition, robot, phase, action, head start)
 
     # ---- geometry ------------------------------------------------------------------------
     @staticmethod
-    def first_move(w, robot: int, start: int, goal: int, blocked: int, q: np.ndarray):
+    def first_move(w, robot: int, start: int, goal: int, blocked: int, q: np.ndarray,
+                   avoid: int = -1):
         """(move, moves to go) of a shortest path start -> goal on the robot's moves round
-        the cell ``blocked``, among the moves legal in ``q``; (None, inf) if no legal move
-        gets closer.  ``start == goal``: (None, 0)."""
+        the cell ``blocked`` (-1: none), among the moves legal in ``q``, one not onto the
+        cell ``avoid`` first; (None, inf) if no legal move gets closer.  ``start == goal``:
+        (None, 0)."""
         if start == goal:
             return None, 0
         nb, ok = w.nb_by[robot], w.valid_by[robot]
@@ -119,14 +122,17 @@ class DecoyFeint:
                     if y not in dist and y != blocked:
                         dist[y] = dist[x] + 1
                         todo.append(y)
-        best, best_d = None, np.inf
+        best, best_key = None, None
         here = dist.get(start, np.inf)
         for a in range(4):
             if ok[start, a] and np.isfinite(q[a]):
-                d = dist.get(int(nb[start, a]), np.inf)
-                if d < best_d and d < here:
-                    best, best_d = a, d
-        return best, best_d + 1 if best is not None else np.inf
+                y = int(nb[start, a])
+                d = dist.get(y, np.inf)
+                if d < here:
+                    key = (y == avoid, d)
+                    if best_key is None or key < best_key:
+                        best, best_key = a, key
+        return best, (best_key[1] + 1) if best is not None else np.inf
 
     @staticmethod
     def moves(w, robot: int, start: int, goal: int, blocked: int = -1) -> float:
@@ -190,6 +196,104 @@ class DecoyFeint:
         return (self.moves(w, p, int(state[p]), cell)
                 <= self.moves(w, i, int(state[i]), cell, blocked=int(state[p])))
 
+    def path(self, w, robot: int, start: int, goal: int) -> list:
+        """The cells of a shortest path start -> goal on the robot's moves (start left out,
+        goal included); [] if there is none or start == goal."""
+        if start == goal:
+            return []
+        nb, ok = w.nb_by[robot], w.valid_by[robot]
+        parent = {start: None}
+        todo = deque([start])
+        while todo:
+            x = todo.popleft()
+            if x == goal:
+                break
+            for a in range(4):
+                if ok[x, a]:
+                    y = int(nb[x, a])
+                    if y not in parent:
+                        parent[y] = x
+                        todo.append(y)
+        if goal not in parent:
+            return []
+        out, x = [], goal
+        while x != start:
+            out.append(x)
+            x = parent[x]
+        return out[::-1]
+
+    def route(self, w, state, status, where, i: int) -> list:
+        """(cell, transitions until the robot is on it) along what is left of the option: to
+        its own object's cell (the decoy in hand), the swap there, then on to its
+        destination -- by the shortest way, the partner left out."""
+        spot = self.cell_of(w, status, state, where, i)
+        dest = int(w.true_dest[i])
+        here = int(state[i])
+        t_spot = self.moves(w, i, here, spot)
+        out = [(spot, t_spot)]
+        tt = t_spot + 1                         # the swap
+        for x in self.path(w, i, spot, dest):
+            tt += 1
+            out.append((x, tt))
+        return out
+
+    def head_start(self, w, state, status, where, i: int) -> float:
+        """How many transitions the partner is short of reaching each cell of the robot's
+        route (route()) before the robot does, at the worst cell, counting the partner's
+        reaction lag (``feint_lag``): > 0 means the robot gets everywhere on it first."""
+        p = 1 - i
+        lag = float(self.cfg.feint_lag)
+        g = int(state[p])
+        return float(min(self.moves(w, p, g, x) + lag - when
+                         for x, when in self.route(w, state, status, where, i)))
+
+    def lure_target(self, w, state, status, where, i: int) -> int:
+        """The candidate destination to carry the decoy toward: of those the robot can reach,
+        other than its own destination, the one from which a guard would need the most
+        moves back to the robot's route (its object's cell and its destination); ties to the
+        nearer one for the robot."""
+        p = 1 - i
+        dest = int(w.true_dest[i])
+        spot = self.cell_of(w, status, state, where, i)
+        here = int(state[i])
+        best, key = None, None
+        for c in w.goals:
+            x = int(w.cell_id[tuple(c)])
+            if x == dest:
+                continue
+            reach = self.moves(w, i, here, x)
+            if not np.isfinite(reach):
+                continue
+            far = min(self.moves(w, p, x, dest), self.moves(w, p, x, spot))
+            k = (far, -reach)
+            if key is None or k > key:
+                best, key = x, k
+        return here if best is None else best
+
+    def _go(self, mdp, state, goal: int, i: int, qi) -> int:
+        """A step toward ``goal`` by the shortest way, the partner left out; where the
+        partner stands on the next cell, wait for it to move (up to ``feint_wait``
+        transitions), then go round it."""
+        w, opt, p = mdp.w, self.option[i], 1 - i
+        here, there = int(state[i]), int(state[p])
+        a, _ = self.first_move(w, i, here, goal, -1, qi, avoid=there)
+        if a is not None and int(w.nb_by[i][here, a]) != there:
+            opt["waits"] = 0
+            return a
+        if opt["waits"] < self.cfg.feint_wait:
+            opt["waits"] += 1
+            return WAIT
+        a, _ = self.first_move(w, i, here, goal, there, qi)
+        return WAIT if a is None else a
+
+    def _phase(self, t: int, i: int, name: str, limit: float, **extra) -> None:
+        opt = self.option[i]
+        opt.update(phase=name, phase_since=t, phase_limit=int(min(limit, 10 ** 6)), waits=0,
+                   **extra)
+        self.events.append((t + 1, i, name, None if "lure" not in extra else extra["lure"]))
+        if self.cfg.verbose:
+            print(f"[pairings] feint: R{i} -- {name}", flush=True)
+
     def _decide(self, mdp, t, state, status, where, q, i, planned):
         w, cfg, p = mdp.w, self.cfg, 1 - i
         block = int(state[2])
@@ -199,7 +303,12 @@ class DecoyFeint:
                 self._end(mdp, t, i, "its goal done")
             return None
         if self.option[i] is not None:          # following the option
-            return self._follow(mdp, t, state, status, where, q, i, planned, holds)
+            a = self._follow(mdp, t, state, status, where, q, i, planned, holds)
+            if self.option[i] is not None:
+                opt = self.option[i]
+                self.steps.append((t + 1, i, opt["phase"], None if a is None else int(a),
+                                   opt.get("margin")))
+            return a
         # considering it: hands empty, and its object in the partner's hands or guarded
         if holds[i] >= 0 or any(w.lifter_of(int(v)) == i for v in status):
             return None
@@ -221,63 +330,108 @@ class DecoyFeint:
             return None
         best["taken"] = True
         k = best["decoy"]
-        back = self.moves(w, i, self.cell_of(w, status, state, where, k),
-                          self.cell_of(w, status, state, where, i))
-        self.option[i] = dict(decoy=k, since=t, phase="to the decoy",
-                              limit=2 * (best["transitions"] + int(min(back, w.N))) + 10)
+        self.option[i] = dict(decoy=k, since=t, lures=0)
         self.events.append((t + 1, i, "begun", k))
+        self._phase(t, i, "to the decoy", 3 * best["transitions"] + 10)
         if cfg.verbose:
             print(f"[pairings] feint: R{i} goes for the decoy (object {k}; its own object "
                   f"{'in the partner hands' if held else 'guarded'})", flush=True)
         return self._step(mdp, state, status, where, k, i, q[i])
 
     def _follow(self, mdp, t, state, status, where, q, i, planned, holds):
-        """The option's phases: to the decoy and lift it; then hold it while the partner
-        holds the robot's object; then, the object lying free, carry the decoy to it and
-        swap the two (the decoy stays, the object comes into the robot's hands).  The
-        decoy stays in hand until the swap: with hands full the partner's belief about the
-        robot's object does not move (the posteriors' stages), so it is not read again.
-        Ends with the object in the robot's hands (its planner delivers it), or where the
-        option no longer makes sense."""
-        w, opt, p = mdp.w, self.option[i], 1 - i
+        """The option's phases: "to the decoy" (walk to it and lift it, whatever the partner
+        does meanwhile); "luring" (carry it toward the candidate destination farthest from
+        the robot's route, wait there, until the robot's object lies free and the partner
+        cannot reach any cell of the route first -- head_start()); "to its object" (carry the
+        decoy to the object's cell and swap the two: the decoy stays, the object comes into
+        the robot's hands); "delivering" (carry the object to the robot's destination and
+        set it down).  The decoy stays in hand until the swap: with hands full the partner's
+        belief about the robot's object does not move (the posteriors' stages), so it is not
+        read again.  A phase that runs past its own limit ends the option -- except luring,
+        which turns back if the object lies free."""
+        w, cfg, opt = mdp.w, self.cfg, self.option[i]
         k, mine = opt["decoy"], i
-        why = None
-        if t - opt["since"] > opt["limit"]:
-            why = "too long"
-        elif holds[i] == mine:
-            why = "its object in hand"
-        elif opt["phase"] == "to the decoy":
-            if holds[i] == k:
-                opt["phase"] = "holding the decoy"
-                self.events.append((t + 1, i, "decoy in hand", k))
-            elif holds[i] >= 0:
-                why = "hands full"
-            elif not self.free(w, status, k, i):
-                why = "the decoy taken"
-            elif (self.free(w, status, mine, i) and not self.guarded(w, state, status, where, i)):
-                why = "its object free and nearer to it than to the partner"
-            else:
+        phase = opt["phase"]
+        late = t - opt["phase_since"] > opt["phase_limit"]
+        if phase == "to the decoy":
+            why = ("its object in hand" if holds[i] == mine
+                   else None if holds[i] == k
+                   else "hands full" if holds[i] >= 0
+                   else "the decoy taken" if not self.free(w, status, k, i)
+                   else "its object free and nearer to it than to the partner"
+                   if (self.free(w, status, mine, i)
+                       and not self.guarded(w, state, status, where, i))
+                   else "too long" if late else None)
+            if why is not None:
+                self._end(mdp, t, i, why)
+                return None
+            if holds[i] != k:
                 return self._step(mdp, state, status, where, k, i, q[i])
-        elif holds[i] != k:
-            why = "the decoy lost"
-        if why is not None:
-            self._end(mdp, t, i, why)
-            return None
-        # holding the decoy
-        if not self.free(w, status, mine, i):   # the object still in the partner's hands:
-            opt["phase"] = "holding the decoy"   # the planner's way, the decoy kept
-            return WAIT if planned in (PLACE, GIVE, SWAP) else None
-        if not self.cfg.swap_on_place:           # no swap: nothing to trade the decoy for
-            self._end(mdp, t, i, "no swaps (Config.swap_on_place)")
-            return None
-        if opt["phase"] != "to its object":
-            opt["phase"] = "to its object"
-            self.events.append((t + 1, i, "to its object", mine))
-        goal = self.cell_of(w, status, state, where, mine)
-        if int(state[i]) == goal:
-            return SWAP if np.isfinite(q[i][SWAP]) else WAIT
-        a, _ = self.first_move(w, i, int(state[i]), goal, int(state[p]), q[i])
-        return WAIT if a is None else a
+            if not cfg.swap_on_place:            # nothing to trade the decoy for
+                self._end(mdp, t, i, "the decoy in hand; no swaps (Config.swap_on_place)")
+                return None
+            if cfg.feint_lure:
+                lure = self.lure_target(w, state, status, where, i)
+                self._phase(t, i, "luring", 3 * self.moves(w, i, int(state[i]), lure) + 15,
+                            lure=lure)
+            else:
+                self._phase(t, i, "to its object", 3 * self.route(w, state, status, where,
+                                                                 i)[0][1] + 10)
+            phase, late = opt["phase"], False
+        if phase in ("luring", "to its object"):
+            if holds[i] == mine:                 # the swap done
+                dest = int(w.true_dest[i])
+                self._phase(t, i, "delivering", 3 * self.moves(w, i, int(state[i]), dest) + 10)
+                phase, late = "delivering", False
+            elif holds[i] != k:
+                self._end(mdp, t, i, "the decoy lost")
+                return None
+        if phase == "luring":
+            free = self.free(w, status, mine, i)
+            opt["margin"] = margin = (self.head_start(w, state, status, where, i) if free
+                                      else None)
+            if free and (margin > 0 or late):
+                self._phase(t, i, "to its object",
+                            3 * self.route(w, state, status, where, i)[0][1] + 10,
+                            margin_at_turn=margin)
+                phase, late = "to its object", False
+            elif late:
+                self._end(mdp, t, i, "too long luring (its object still held)")
+                return None
+            else:
+                lure = opt["lure"]
+                if int(state[i]) == lure:
+                    return WAIT
+                return self._go(mdp, state, lure, i, q[i])
+        if phase == "to its object":
+            if not self.free(w, status, mine, i):          # picked up again
+                opt["lures"] += 1
+                if opt["lures"] > 1:
+                    self._end(mdp, t, i, "its object taken back")
+                    return None
+                lure = self.lure_target(w, state, status, where, i)
+                self._phase(t, i, "luring", 3 * self.moves(w, i, int(state[i]), lure) + 15,
+                            lure=lure)
+                return self._go(mdp, state, lure, i, q[i])
+            if late:
+                self._end(mdp, t, i, "too long")
+                return None
+            goal = self.cell_of(w, status, state, where, mine)
+            if int(state[i]) == goal:
+                return SWAP if np.isfinite(q[i][SWAP]) else WAIT
+            return self._go(mdp, state, goal, i, q[i])
+        if phase == "delivering":
+            if holds[i] != mine:
+                self._end(mdp, t, i, "its object lost")
+                return None
+            if late:
+                self._end(mdp, t, i, "too long")
+                return None
+            dest = int(w.true_dest[i])
+            if int(state[i]) == dest:
+                return PLACE if np.isfinite(q[i][PLACE]) else WAIT
+            return self._go(mdp, state, dest, i, q[i])
+        return None
 
     def _end(self, mdp, t, i, why) -> None:
         self.events.append((t + 1, i, "ended", why))
@@ -287,14 +441,13 @@ class DecoyFeint:
             print(f"[pairings] feint: R{i}'s option ended ({why})", flush=True)
 
     def _step(self, mdp, state, status, where, k, i, qi):
-        """The option's action at the real state: lift the decoy where it lies, else a step
-        toward it; None (the planner's own) if no legal step gets closer."""
+        """Toward the decoy and lift it: the lift where it lies, else a step toward it
+        (_go: the shortest way, waiting a little where the partner is in it)."""
         w = mdp.w
         goal = self.cell_of(w, status, state, where, k)
         if int(state[i]) == goal:
             return PICK if np.isfinite(qi[PICK]) else None
-        a, _ = self.first_move(w, i, int(state[i]), goal, int(state[1 - i]), qi)
-        return a
+        return self._go(mdp, state, goal, i, qi)
 
     # ---- the look-ahead --------------------------------------------------------------------
     def evaluate(self, mdp, t, state, status, where, k, i, qi) -> Optional[dict]:
@@ -389,4 +542,5 @@ class DecoyFeint:
         return _finite_max(ev.q_values(ev.root[i], ev.w.sid(end), i))
 
     def record(self) -> dict:
-        return dict(robots=list(self.robots), evaluations=self.log, events=self.events)
+        return dict(robots=list(self.robots), evaluations=self.log, events=self.events,
+                    steps=self.steps)

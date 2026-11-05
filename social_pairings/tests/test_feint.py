@@ -80,35 +80,79 @@ class Feint(unittest.TestCase):
         self.assertFalse(feint.guarded(w, far, free, [None, None], 1))
         self.assertFalse(feint.guarded(w, state, status, [None, None], 1))   # in R0's hands
 
+    def test_the_lure_target(self):
+        """The candidate destination farthest, for the partner, from the robot's route back
+        (its object's cell and its destination), not the robot's own destination."""
+        w, mdp, state, feint, q, status = standoff()
+        at = lambda c: int(w.cell_id[c])               # noqa: E731
+        b = w.block_of([HELD1, HOME], [0, 0])          # R1 has the decoy, its object at home
+        st = (at((2, 2)), at((2, 1)), b)
+        stat = [int(v) for v in w.status[b]]
+        self.assertEqual(int(w.true_dest[1]), at((2, 0)))
+        self.assertEqual(feint.lure_target(w, st, stat, [None, None], 1), at((0, 2)))
+
+    def test_the_head_start(self):
+        """> 0 where the partner, a transition late, reaches no cell of the robot's way back
+        (to its object, the swap, to its destination) before the robot does."""
+        w, mdp, state, feint, q, status = standoff()
+        at = lambda c: int(w.cell_id[c])               # noqa: E731
+        b = w.block_of([HELD1, HOME], [0, 0])
+        stat = [int(v) for v in w.status[b]]
+        far = (at((0, 2)), at((0, 1)), b)              # R1 next to its object, R0 behind it
+        near = (at((2, 2)), at((0, 1)), b)             # R0 near R1's destination (2, 0)
+        self.assertEqual([x for x, _ in feint.route(w, far, stat, [None, None], 1)],
+                         [at((0, 0)), at((1, 0)), at((2, 0))])
+        self.assertGreater(feint.head_start(w, far, stat, [None, None], 1), 0)
+        self.assertLessEqual(feint.head_start(w, near, stat, [None, None], 1), 0)
+
     def test_the_phases(self):
-        """With the decoy in hand: toward its own object where that lies free, the swap on
-        it, and the planner's way (nothing let go of) while the partner holds it."""
+        """Luring until the head start; then to its object and the swap on it; then
+        delivering; luring again where the partner picks the object up meanwhile; the
+        decoy lost ends it."""
         w, mdp, state, feint, q, status = standoff(swap_on_place=True)
         at = lambda c: int(w.cell_id[c])               # noqa: E731
 
-        def follow(cells, objects, planned=WAIT):
+        def follow(cells, objects, t=1):
             st = (at(cells[0]), at(cells[1]), w.block_of(objects, [0, 0]))
             stat = [int(v) for v in w.status[st[2]]]
             qq = [mdp.q_values(mdp.root[i], w.sid(st), i) for i in (0, 1)]
-            return feint._decide(mdp, 1, st, stat, [None, None], qq, 1, planned), qq
+            return feint._decide(mdp, t, st, stat, [None, None], qq, 1, WAIT), qq
 
-        feint.option[1] = dict(decoy=0, since=0, phase="holding the decoy", limit=50)
-        a, qq = follow(((1, 2), (2, 0)), [HELD1, HOME])    # decoy in hand, own object free
+        feint.option[1] = dict(decoy=0, since=0, lures=0)
+        feint._phase(0, 1, "luring", 50, lure=at((0, 2)))
+        a, _ = follow(((2, 2), (0, 1)), [HELD1, HOME])     # R0 near its destination: lure on
+        self.assertEqual(feint.option[1]["phase"], "luring")
+        self.assertEqual(int(w.nb_by[1][at((0, 1)), a]), at((0, 2)))
+        a, qq = follow(((0, 2), (0, 1)), [HELD1, HOME])    # R0 behind: turn back
         self.assertEqual(feint.option[1]["phase"], "to its object")
-        self.assertIn(a, (0, 1, 2, 3))                     # a move ...
-        nb = w.nb_by[1]
-        self.assertLess(feint.moves(w, 1, int(nb[at((2, 0)), a]), at((0, 0))),
-                        feint.moves(w, 1, at((2, 0)), at((0, 0))))   # ... toward (0, 0)
-        a, qq = follow(((2, 2), (0, 0)), [HELD1, HOME])    # on it: the swap
+        self.assertEqual(int(w.nb_by[1][at((0, 1)), a]), at((0, 0)))
+        a, qq = follow(((0, 2), (0, 0)), [HELD1, HOME])    # on it: the swap
         self.assertEqual(a, SWAP if np.isfinite(qq[1][SWAP]) else WAIT)
-        a, _ = follow(((1, 1), (2, 2)), [HELD1, HELD0])    # partner holds it again
-        self.assertEqual(feint.option[1]["phase"], "holding the decoy")
-        self.assertIsNone(a)                               # the planner's move
-        a, _ = follow(((1, 1), (2, 2)), [HELD1, HELD0], planned=PLACE)
-        self.assertEqual(a, WAIT)                          # but the decoy kept
-        follow(((1, 1), (0, 0)), [HOME, HELD1])            # its own object in hand: done
+        a, qq = follow(((0, 2), (0, 0)), [HOME, HELD1])    # its object in hand: deliver
+        self.assertEqual(feint.option[1]["phase"], "delivering")
+        self.assertEqual(int(w.nb_by[1][at((0, 0)), a]), at((1, 0)))
+        a, qq = follow(((0, 2), (2, 0)), [HOME, HELD1])    # on its destination: set it down
+        self.assertEqual(a, PLACE if np.isfinite(qq[1][PLACE]) else WAIT)
+        feint._phase(2, 1, "to its object", 50)            # the partner takes it back: lure
+        follow(((0, 2), (1, 1)), [HELD1, HELD0])
+        self.assertEqual(feint.option[1]["phase"], "luring")
+        follow(((0, 2), (1, 1)), [HOME, HOME])             # the decoy lost
         self.assertIsNone(feint.option[1])
-        self.assertEqual(feint.events[-1][2:], ("ended", "its object in hand"))
+        self.assertEqual(feint.events[-1][2:], ("ended", "the decoy lost"))
+
+    def test_waiting_for_the_way(self):
+        """The partner on the next cell of the shortest way: wait feint_wait transitions,
+        then go round."""
+        w, mdp, state, feint, q, status = standoff()
+        at = lambda c: int(w.cell_id[c])               # noqa: E731
+        b = w.block_of([HOME, HOME], [0, 0])
+        st = (at((1, 1)), at((2, 1)), b)               # R0 between R1 and (0, 1)
+        qq = mdp.q_values(mdp.root[1], w.sid(st), 1)
+        feint.option[1] = dict(decoy=0, since=0, lures=0)
+        feint._phase(0, 1, "to its object", 50)
+        acts = [feint._go(mdp, st, at((0, 1)), 1, qq) for _ in range(feint.cfg.feint_wait + 1)]
+        self.assertEqual(acts[:-1], [WAIT] * feint.cfg.feint_wait)
+        self.assertIn(int(w.nb_by[1][at((2, 1)), acts[-1]]), (at((2, 0)), at((2, 2))))
 
     def test_the_evaluator_is_the_model(self):
         """Given the partner's belief as it is, the second model's value at the state is the
