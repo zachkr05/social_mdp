@@ -2309,9 +2309,10 @@ partner's belief updates (its Sections 3 and 6; the I-POMDP principle, Gmytrasie
 document's finite-lookahead form, for one option -- the decoy:
 
 - **when**: a level-2 robot whose social goal is one of `feint_goals` (default coercion),
-  its object inferred by its partner, its hands empty, its partner holding the robot's own
-  object, and another object lying free; not within `feint_cooldown` (10) transitions of its
-  last option;
+  its object inferred by its partner, its hands empty, its own object in its partner's hands
+  or lying free but guarded (the partner no farther from it than the robot, round the
+  partner), and another object lying free; not within `feint_cooldown` (10) transitions of
+  its last option;
 - **the look-ahead**: walking to the decoy by a shortest path round the partner and lifting
   it, the partner doing meanwhile the most likely action of the robot's prediction of it, and
   every step fed to the partner's **own** belief update (`SocialMDP.updated_belief`: the
@@ -2323,9 +2324,16 @@ document's finite-lookahead form, for one option -- the decoy:
   `feint_min_shift` (0.01), the plan's own value there instead (no second solve);
 - **the choice**: the option's discounted return (its steps' expected rewards, then the
   end's value) against $\max_a Q(s, a)$ of the plan as it is; taken where it wins by more
-  than `feint_margin` (0), then followed until the decoy is in the robot's hands (or the
-  partner lets go of the object, the decoy is taken, or it runs too long); from there the
-  planner as before, with the partner's belief as its own update made it.
+  than `feint_margin` (0);
+- **following it**, in three phases: to the decoy and lift it, even where the partner lets
+  go of the robot's object meanwhile; hold it while the partner still holds the object (the
+  planner's moves, nothing let go of); the object lying free, carry the decoy to it and
+  swap the two (`swap_on_place`: the decoy stays on that cell, the object comes into the
+  robot's hands), after which the planner delivers it. The decoy stays in hand until the
+  swap because with hands full the partner's belief about the robot's object does not move
+  (the posteriors' stages): walking back empty-handed is what gives the robot away. It ends
+  early where it no longer makes sense (the decoy taken or lost, the robot's object free and
+  nearer to the robot than to the partner, or too long).
 
 No reward is added (the document's $\kappa = 0$: the decoy has to earn its value through
 the real task). Left out: the partner's belief moving again after the option (the plan's
@@ -2345,6 +2353,16 @@ hinderer's own object as help, not as wanting it, kept the object, and the coerc
 decoy back. With these inferences the option's look-ahead sees the same and declines it: a
 feint can only work against a partner without a benign reading of the decoy and with a
 belief that can move (a goal hazard or a window).
+
+Against such a hinderer (goal hazard 0.02, no cooperation or exchange hypotheses, the first
+20 transitions as before; the user's desktop, 2026-11-04) the coercer took the option at
+transition 25, the hinderer's belief that it wanted the decoy rose 0.02 -> 0.50 -> 0.81 ->
+0.97, and at 28 the hinderer put the coercer's object back on its place: the feint worked.
+The first version then ended the option ("the partner let go of the object") one step short
+of the decoy; the coercer turned back empty-handed, the hinderer read it at once (0.99 ->
+0.09 -> 0.01) and guarded the object two moves from it, the coercer four (a pillar between),
+and both waited to the deadlock at 58 (the user: "Why does it just stop after coercing it
+both of them just stop moving"). Hence the phases above, and the guarded trigger.
 
 ## The belief update's workings in the record (since 2026-11-04)
 

@@ -6,7 +6,7 @@ import unittest
 import numpy as np
 
 from social_pairings import goals as G
-from social_pairings.constants import PICK
+from social_pairings.constants import HELD0, HELD1, HOME, PICK, PLACE, SWAP, WAIT
 from social_pairings.feint import DecoyFeint
 from social_pairings.tests.test_models import TINY, hostage, solved, tight_explicit
 from social_pairings.util import configure_threads
@@ -66,6 +66,49 @@ class Feint(unittest.TestCase):
         rec = feint.evaluate(mdp, 0, state, status, [None, None], 0, 1, q[1])
         self.assertTrue(rec["end_solved"])
         self.assertIsNotNone(feint.evaluator)
+
+    def test_guarded(self):
+        """The robot's object lying free is guarded where the partner is no farther from it
+        than the robot (round the partner)."""
+        w, mdp, state, feint, q, status = standoff()
+        b = w.block_of([HOME, HOME], [0, 0])
+        free = [int(v) for v in w.status[b]]
+        at = lambda c: int(w.cell_id[c])               # noqa: E731
+        near = (at((0, 1)), at((2, 1)), b)             # R0 next to R1's object at (0, 0)
+        far = (at((2, 0)), at((0, 1)), b)              # R1 next to it, R0 far
+        self.assertTrue(feint.guarded(w, near, free, [None, None], 1))
+        self.assertFalse(feint.guarded(w, far, free, [None, None], 1))
+        self.assertFalse(feint.guarded(w, state, status, [None, None], 1))   # in R0's hands
+
+    def test_the_phases(self):
+        """With the decoy in hand: toward its own object where that lies free, the swap on
+        it, and the planner's way (nothing let go of) while the partner holds it."""
+        w, mdp, state, feint, q, status = standoff(swap_on_place=True)
+        at = lambda c: int(w.cell_id[c])               # noqa: E731
+
+        def follow(cells, objects, planned=WAIT):
+            st = (at(cells[0]), at(cells[1]), w.block_of(objects, [0, 0]))
+            stat = [int(v) for v in w.status[st[2]]]
+            qq = [mdp.q_values(mdp.root[i], w.sid(st), i) for i in (0, 1)]
+            return feint._decide(mdp, 1, st, stat, [None, None], qq, 1, planned), qq
+
+        feint.option[1] = dict(decoy=0, since=0, phase="holding the decoy", limit=50)
+        a, qq = follow(((1, 2), (2, 0)), [HELD1, HOME])    # decoy in hand, own object free
+        self.assertEqual(feint.option[1]["phase"], "to its object")
+        self.assertIn(a, (0, 1, 2, 3))                     # a move ...
+        nb = w.nb_by[1]
+        self.assertLess(feint.moves(w, 1, int(nb[at((2, 0)), a]), at((0, 0))),
+                        feint.moves(w, 1, at((2, 0)), at((0, 0))))   # ... toward (0, 0)
+        a, qq = follow(((2, 2), (0, 0)), [HELD1, HOME])    # on it: the swap
+        self.assertEqual(a, SWAP if np.isfinite(qq[1][SWAP]) else WAIT)
+        a, _ = follow(((1, 1), (2, 2)), [HELD1, HELD0])    # partner holds it again
+        self.assertEqual(feint.option[1]["phase"], "holding the decoy")
+        self.assertIsNone(a)                               # the planner's move
+        a, _ = follow(((1, 1), (2, 2)), [HELD1, HELD0], planned=PLACE)
+        self.assertEqual(a, WAIT)                          # but the decoy kept
+        follow(((1, 1), (0, 0)), [HOME, HELD1])            # its own object in hand: done
+        self.assertIsNone(feint.option[1])
+        self.assertEqual(feint.events[-1][2:], ("ended", "its object in hand"))
 
     def test_the_evaluator_is_the_model(self):
         """Given the partner's belief as it is, the second model's value at the state is the

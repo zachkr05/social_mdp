@@ -17,8 +17,9 @@ one option, the decoy:
 
 * when: the robot's social goal is one of ``Config.feint_goals`` (default coercion), it is
   at level 2, its partner infers its object (``partner_object="inferred"``), its hands are
-  empty, its partner holds the robot's own object, and an object other than that one lies
-  free (the decoy); not within ``feint_cooldown`` transitions of its last option;
+  empty, its own object is in its partner's hands or lies free but guarded (the partner no
+  farther from it than the robot, round the partner), and an object other than that one
+  lies free (the decoy); not within ``feint_cooldown`` transitions of its last option;
 * what it looks ahead at: walking to the decoy by a shortest path round the partner and
   lifting it, the partner meanwhile doing what the robot's model predicts (the most likely
   action of Eq. 4's prediction); each step's transition fed to the PARTNER'S OWN belief
@@ -32,10 +33,24 @@ one option, the decoy:
   there (nothing to re-solve);
 * the choice: the option's discounted return (its steps' expected rewards, then the end
   value) against the value of the plan as it is, max_a Q(s, a); taken if it wins by more than
-  ``feint_margin``, then followed until the decoy is in the robot's hands (or the option no
-  longer makes sense: the partner let go of the object, the decoy was taken, or it ran too
-  long); from there the planner as before, with the partner's belief as the partner's own
-  update made it.
+  ``feint_margin``;
+* following it, in three phases: to the decoy and lift it (even where the partner lets go of
+  the robot's object meanwhile); hold it while the partner still holds the robot's object
+  (the planner's moves, nothing let go of); and, the object lying free, carry the decoy to
+  it and swap the two ("swap": the decoy stays on that cell, the object comes into the
+  robot's hands), after which the planner delivers it.  The decoy stays in hand until the
+  swap because with hands full the partner's belief about the robot's object does not move
+  (the posteriors' stages): walking back empty-handed is what gives the robot away.  It
+  ends early where it no longer makes sense: the decoy taken or lost, the robot's object
+  free and nearer to the robot than to the partner (the planner goes for it), or too long.
+
+The first version ended the option the moment the partner let go of the robot's object (the
+user, of the two-room rerun: "Why does it just stop after coercing it both of them just stop
+moving"): the coercer turned back empty-handed one step short of the decoy, the hinderer
+read it at once (its belief that the coercer wanted the decoy 0.99 -> 0.09 -> 0.01) and
+guarded the object two moves from it, the coercer four, and both waited to the deadlock.
+"Once it drops the object we want red to actuall y go ahead and pick it up": the phases
+above.
 
 No reward is added: the document's kappa = 0, "the decoy must earn its value through improved
 true-task outcomes under the belief-aware transition model".  What it leaves out: the
@@ -50,7 +65,7 @@ from typing import Optional
 import numpy as np
 
 from . import goals as G
-from .constants import HELD0, HELD1, HOME, PICK, WAIT
+from .constants import GIVE, HELD0, HELD1, HOME, PICK, PLACE, SWAP, WAIT
 
 __all__ = ["DecoyFeint"]
 
@@ -114,6 +129,26 @@ class DecoyFeint:
         return best, best_d + 1 if best is not None else np.inf
 
     @staticmethod
+    def moves(w, robot: int, start: int, goal: int, blocked: int = -1) -> float:
+        """Moves of the robot's shortest path start -> goal round the cell ``blocked``."""
+        if start == goal:
+            return 0
+        nb, ok = w.nb_by[robot], w.valid_by[robot]
+        seen = {start: 0}
+        todo = deque([start])
+        while todo:
+            x = todo.popleft()
+            for a in range(4):
+                if ok[x, a]:
+                    y = int(nb[x, a])
+                    if y not in seen and y != blocked:
+                        seen[y] = seen[x] + 1
+                        if y == goal:
+                            return seen[y]
+                        todo.append(y)
+        return np.inf
+
+    @staticmethod
     def free(w, status, k: int, robot: int) -> bool:
         """Object k lies where it can be picked up (its place or where it was left), or is
         being lifted by ``robot`` itself."""
@@ -140,34 +175,36 @@ class DecoyFeint:
         """The joint action, the option's step in place of the planner's where it applies."""
         out = list(int(a) for a in act)
         for i in self.robots:
-            a = self._decide(mdp, t, state, status, where, q, i)
+            a = self._decide(mdp, t, state, status, where, q, i, int(act[i]))
             if a is not None:
                 out[i] = int(a)
         return tuple(out)
 
-    def _decide(self, mdp, t, state, status, where, q, i):
+    def guarded(self, w, state, status, where, i: int) -> bool:
+        """Robot i's own object lies free, and its partner is no farther from it than the
+        robot is (round the partner): a guard the robot cannot outrun to it."""
+        p = 1 - i
+        if not self.free(w, status, i, i) or w.lifter_of(int(status[i])) >= 0:
+            return False
+        cell = self.cell_of(w, status, state, where, i)
+        return (self.moves(w, p, int(state[p]), cell)
+                <= self.moves(w, i, int(state[i]), cell, blocked=int(state[p])))
+
+    def _decide(self, mdp, t, state, status, where, q, i, planned):
         w, cfg, p = mdp.w, self.cfg, 1 - i
         block = int(state[2])
         holds = _holds(status)
         if w.done[block, i]:
-            self.option[i] = None
+            if self.option[i] is not None:
+                self._end(mdp, t, i, "its goal done")
             return None
-        opt = self.option[i]
-        if opt is not None:                    # following the option
-            k = opt["decoy"]
-            why = ("the decoy in hand" if holds[i] == k
-                   else "the partner let go of the object" if holds[p] != i
-                   else "hands full" if holds[i] >= 0
-                   else "the decoy taken" if not self.free(w, status, k, i)
-                   else "too long" if t - opt["since"] > opt["limit"] else None)
-            if why is not None:
-                self._end(mdp, t, i, why)
-                return None
-            return self._step(mdp, state, status, where, k, i, q[i])
-        # considering it
-        if holds[i] >= 0 or holds[p] != i:
+        if self.option[i] is not None:          # following the option
+            return self._follow(mdp, t, state, status, where, q, i, planned, holds)
+        # considering it: hands empty, and its object in the partner's hands or guarded
+        if holds[i] >= 0 or any(w.lifter_of(int(v)) == i for v in status):
             return None
-        if any(w.lifter_of(int(v)) == i for v in status):
+        held = holds[p] == i
+        if not held and not self.guarded(w, state, status, where, i):
             return None
         if self.ended[i] is not None and t - self.ended[i] < cfg.feint_cooldown:
             return None
@@ -176,18 +213,71 @@ class DecoyFeint:
             if k == i or not self.free(w, status, k, i):
                 continue
             ev = self.evaluate(mdp, t, state, status, where, k, i, q[i])
-            if ev is not None and (best is None or ev["gain"] > best["gain"]):
-                best = ev
+            if ev is not None:
+                ev["trigger"] = "held" if held else "guarded"
+                if best is None or ev["gain"] > best["gain"]:
+                    best = ev
         if best is None or not best["gain"] > cfg.feint_margin:
             return None
         best["taken"] = True
-        self.option[i] = dict(decoy=best["decoy"], since=t,
-                              limit=2 * best["transitions"] + 6)
-        self.events.append((t + 1, i, "begun", best["decoy"]))
+        k = best["decoy"]
+        back = self.moves(w, i, self.cell_of(w, status, state, where, k),
+                          self.cell_of(w, status, state, where, i))
+        self.option[i] = dict(decoy=k, since=t, phase="to the decoy",
+                              limit=2 * (best["transitions"] + int(min(back, w.N))) + 10)
+        self.events.append((t + 1, i, "begun", k))
         if cfg.verbose:
-            print(f"[pairings] feint: R{i} goes for the decoy (object {best['decoy']})",
-                  flush=True)
-        return self._step(mdp, state, status, where, best["decoy"], i, q[i])
+            print(f"[pairings] feint: R{i} goes for the decoy (object {k}; its own object "
+                  f"{'in the partner hands' if held else 'guarded'})", flush=True)
+        return self._step(mdp, state, status, where, k, i, q[i])
+
+    def _follow(self, mdp, t, state, status, where, q, i, planned, holds):
+        """The option's phases: to the decoy and lift it; then hold it while the partner
+        holds the robot's object; then, the object lying free, carry the decoy to it and
+        swap the two (the decoy stays, the object comes into the robot's hands).  The
+        decoy stays in hand until the swap: with hands full the partner's belief about the
+        robot's object does not move (the posteriors' stages), so it is not read again.
+        Ends with the object in the robot's hands (its planner delivers it), or where the
+        option no longer makes sense."""
+        w, opt, p = mdp.w, self.option[i], 1 - i
+        k, mine = opt["decoy"], i
+        why = None
+        if t - opt["since"] > opt["limit"]:
+            why = "too long"
+        elif holds[i] == mine:
+            why = "its object in hand"
+        elif opt["phase"] == "to the decoy":
+            if holds[i] == k:
+                opt["phase"] = "holding the decoy"
+                self.events.append((t + 1, i, "decoy in hand", k))
+            elif holds[i] >= 0:
+                why = "hands full"
+            elif not self.free(w, status, k, i):
+                why = "the decoy taken"
+            elif (self.free(w, status, mine, i) and not self.guarded(w, state, status, where, i)):
+                why = "its object free and nearer to it than to the partner"
+            else:
+                return self._step(mdp, state, status, where, k, i, q[i])
+        elif holds[i] != k:
+            why = "the decoy lost"
+        if why is not None:
+            self._end(mdp, t, i, why)
+            return None
+        # holding the decoy
+        if not self.free(w, status, mine, i):   # the object still in the partner's hands:
+            opt["phase"] = "holding the decoy"   # the planner's way, the decoy kept
+            return WAIT if planned in (PLACE, GIVE, SWAP) else None
+        if not self.cfg.swap_on_place:           # no swap: nothing to trade the decoy for
+            self._end(mdp, t, i, "no swaps (Config.swap_on_place)")
+            return None
+        if opt["phase"] != "to its object":
+            opt["phase"] = "to its object"
+            self.events.append((t + 1, i, "to its object", mine))
+        goal = self.cell_of(w, status, state, where, mine)
+        if int(state[i]) == goal:
+            return SWAP if np.isfinite(q[i][SWAP]) else WAIT
+        a, _ = self.first_move(w, i, int(state[i]), goal, int(state[p]), q[i])
+        return WAIT if a is None else a
 
     def _end(self, mdp, t, i, why) -> None:
         self.events.append((t + 1, i, "ended", why))
