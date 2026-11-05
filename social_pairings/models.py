@@ -931,7 +931,8 @@ class SocialMDP:
 
     def _input_args(self, d: int, slot: BeliefSlot, rows: np.ndarray, keys: list,
                     terms: Optional[dict] = None, out: Optional[tuple] = None,
-                    about: Optional[list] = None) -> tuple:
+                    about: Optional[list] = None, flags: Optional[tuple] = None,
+                    nested: Optional[np.ndarray] = None) -> tuple:
         """The arguments of :func:`kernels.inputs_typed` for the models ``rows`` of a slot.
         terms: the social coefficients to use instead of the models' own -- at depth 1
         {"partner_goal": (M,), "own_term": (M,), "race": (M,)} (goals.level1_term's a, b,
@@ -941,7 +942,11 @@ class SocialMDP:
         and the terms named (:meth:`value_components`).  out: (P, p_row, R, pd, ho) to
         write into instead of the bank's (R indexed by the position in ``rows``).  about:
         the beliefs to read in place of ``self.about`` (beliefplan.py: a model re-solved at
-        a belief the partner may come to hold)."""
+        a belief the partner may come to hold).  flags: (social (M,), zero (M,)) in place
+        of the bank's, and nested: (PG,) in place of :meth:`nested_phys` -- a model of the
+        robot under goals the bank does not hold (beliefplan.py, ``Config.belief_partner=
+        "inferred"``: the partner's root under a hypothesis about its goals, the slot's
+        ``group`` its physical goal and ``keys`` its social goal)."""
         w, cfg, L0, L1, K = self.w, self.cfg, self.L0, self.L1, self.PG
         about = self.about if about is None else about
         bank = self.bank(d)
@@ -958,9 +963,12 @@ class SocialMDP:
                   w.cls_obj, w.at_partner_obj, w.cls_est, w.at_partner_est, w.rate_cls,
                   w.cost_c, w.site_of, w.goal_at_site, lo, hi)
         qown, kown = int(self.pg_obj[o, g]), int(self.pg_dst[o, g])
+        social_f, zero_f = ((bank.social[rows], bank.zero[rows]) if flags is None
+                            else (np.asarray(flags[0], dtype=np.int64),
+                                  np.asarray(flags[1], dtype=np.int64)))
         models = (rows if out is None else np.arange(M, dtype=np.int64), int(g), qown, kown,
-                  np.ascontiguousarray(bank.social[rows]),
-                  np.ascontiguousarray(bank.zero[rows]).astype(np.uint8))
+                  np.ascontiguousarray(social_f),
+                  np.ascontiguousarray(zero_f).astype(np.uint8))
         goals = (self.pg_obj[p], self.pg_dst[p], self.pg_obj[o], self.pg_dst[o],
                  self.infer_object)
         P, p_row, R, pd, ho = ((bank.P, slot.p_row, bank.R, bank.pd, bank.ho) if out is None
@@ -1008,7 +1016,8 @@ class SocialMDP:
         # the partner's (every level-1 model's) belief about robot o: about[o], the same
         # posterior whatever the model's own goal; its idle mode likewise.  Under
         # Config.objective="task" robot o's reward reads its true goal there (nested_phys)
-        nested_belief = np.tile(self.nested_phys(o, about), (K, 1))           # (PG, PG)
+        nested_belief = np.tile(self.nested_phys(o, about) if nested is None
+                                else np.asarray(nested, dtype=np.float64), (K, 1))  # (PG, PG)
         nested_idle = np.full((K, K), float(about[o].idle))
         return (*common, L1.psi, child_rows, np.ascontiguousarray(slot.hyp_goal),
                 np.ascontiguousarray(slot.hyp_type), K, n_types, b * (1.0 - q), b * q,

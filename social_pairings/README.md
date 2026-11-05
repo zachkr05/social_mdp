@@ -2431,10 +2431,43 @@ its next choice uses that.
   scratch arrays), greedy with `util.argmax_action`'s tie-break and its inertia -- the rule
   it acts by. Its inertia needs one bit of its history: whether its best action would undo
   its last one (then it plays the next best unless undoing wins by more than the margin).
-  So the robot knows its partner's social goal, weight and level: **an oracle**, said so in
-  the record. Its belief it does not need to be told: both see the same history, and the
-  partner's prior and rule are the model's (`SocialMDP.about[i]` is exactly what the
-  partner holds). The dynamics are the true ones.
+  Under `belief_partner="oracle"` the robot knows its partner's social goal, weight and level
+  (**an oracle**, said so in the record) and the dynamics are the true ones; under
+  `"inferred"`, the default since the evening of 2026-11-05, its goals are hypotheses of the
+  robot's own posteriors (below). Its belief the robot does not need to be told: both see
+  the same history, and the partner's prior and rule are the model's (`SocialMDP.about[i]`
+  is exactly what the partner holds).
+* *Whom the partner is taken to be* (`Config.belief_partner`, `--belief-partner`; the user,
+  2026-11-05 evening: "So can u modify it so that everything is inferred and nothing is I
+  guess truly known. Red should infer the belief from green then apply to formula to
+  manipulate it"). `"inferred"`: the hypotheses $h = (g, \xi)$ -- the partner's physical
+  goal (object, destination) and social goal -- of the robot's own posteriors about it,
+  $b(h) = b_g(g)\,b_\xi(\xi)$ (Eqs. 5-6, the weights its planner of Eq. 4 reads), most likely
+  first, until all but `belief_partner_mass` (0.05) is covered or `belief_partner_max` (4)
+  are kept, renormalised. A hinderer without a goal of its own sets nothing down for itself:
+  its destinations are one hypothesis per object, the most likely standing for them. Under
+  each, the plan above with the partner's root re-solved under $h$ at every point, the
+  robot's reward against $h$ (Table I's cell for $\xi$, $r(g_j)$ for $g$), and the hands of a
+  world whose partner has goal $g$ (`ObjectWorld._table`: a set-down or hand-over for it
+  counts with its object, on its destination; a partner taken to want the robot's own object
+  on the robot's own destination finishes both goals with one set-down there, `_same_goal`,
+  and one taken to want it elsewhere takes it for itself); the decision
+  $$Q(s, m, a_i) = \sum_h \hat b(h)\, Q_h(s, m, a_i)$$
+  -- QMDP (Littman, Cassandra & Kaelbling 1995): each plan as if the partner's type were known
+  from the next step on, the robot's own posterior held within a plan as Eq. 4 holds it. Left
+  out of the plan: the partner's idle mode (it is predicted by its greedy choice under each
+  hypothesis). Still given, as the model gives them to every robot: the partner's level,
+  weight and tau, its update rule and its greedy choice with inertia. The record's decisions
+  carry the hypotheses (object, destination, social goal, weight, mass, each one's Q), the
+  mass covered and the partner's predicted action as a distribution
+  (`partner_prediction`). `belief_partner_max=1`: the most likely hypothesis alone
+  (certainty equivalence). Folders `..._bpinf` (`_bpm<mass>`, `_bpk<max>` where not the
+  defaults); `"oracle"` names nothing, the folders of before. Checked
+  (`tests/test_belief_partner.py`): the world of the true goals is the true world; the
+  partner re-solved under its true goals is the root the rollout solved; a partner with the
+  robot's own goal finishes it with the robot; a posterior that
+  is a point mass on the truth decides as the oracle does; the decision is the weighted Q of
+  the plans; the hypotheses kept, merged and weighted; a rollout.
 * *The beliefs*: at most `belief_points` (40) belief points -- the partner's belief now
   (point 0, exact), those it would form if the robot acted by each hypothesis it holds about
   it (the robot's level-1 models, most likely action: probes), and those along the planned

@@ -114,6 +114,9 @@ ADDED_FIELDS = dict(
     belief_interpolation="segment",
     belief_tail="frozen",
     belief_planning_from=0,
+    belief_partner="oracle",       # 2026-11-05 (evening; the partner's true goals in the plan)
+    belief_partner_mass=0.05,
+    belief_partner_max=4,
     steal_robots=(True, True),     # 2026-11-05 (both robots took, with steal)
     forced_actions=(),             # 2026-11-05 (nothing forced)
 )
@@ -670,8 +673,10 @@ class Config:
     # computed over all states at once and checked against it), u what would undo the
     # partner's last action (its inertia).  The partner chooses with m before it sees the
     # robot's simultaneous action, and updates after.  It is predicted by its own model
-    # re-solved at m, greedy, with its inertia: the robot knows the partner's type (an oracle,
-    # said so in the record) and reconstructs its belief from the history both see.  m ranges
+    # re-solved at m, greedy, with its inertia -- under each hypothesis about its goals that
+    # the robot's own posteriors hold (belief_partner="inferred", the default), or under its
+    # true goals ("oracle") -- and the robot reconstructs its belief from the history both
+    # see.  m ranges
     # over at most belief_points beliefs -- the partner's belief now, those it would form if
     # the robot acted by any of the hypotheses the partner holds about it, and those along
     # the planned way (belief_refinements rounds), a new one where a belief lies farther than
@@ -697,6 +702,33 @@ class Config:
     # of Eq. 4 -- the history the robot finds itself in, e.g. its object held by a hinderer
     # since transition 8 or so ("the first 20 transitions as before").  Folders _bfrom<n>.
     belief_planning_from: int = 0
+    # Whom the planning robot takes its partner to be (2026-11-05, evening; the user: "So can
+    # u modify it so that everything is inferred and nothing is I guess truly known. Red
+    # should infer the belief from green then apply to formula to manipulate it").
+    # "inferred" (the default): the partner's physical goal (object, destination) and social
+    # goal are what the robot's own posteriors about it say -- about[partner], Eqs. 5-6, the
+    # same beliefs its planner of Eq. 4 weights its hypotheses by.  The robot plans against
+    # each hypothesis (physical goal, social goal) that holds most of that posterior: the
+    # partner's root re-solved under the hypothesis at every belief point, the robot's reward
+    # read against it (Table I's cell for that social goal, r(g_j) for that physical goal),
+    # the world's hands those of a partner with that goal -- and chooses by the
+    # posterior-weighted Q of those plans: QMDP (Littman, Cassandra & Kaelbling 1995), each
+    # plan as if the partner's type were known from the next step on, the robot's own
+    # posterior held within a plan as Eq. 4 holds it.  The hypotheses kept: the most likely
+    # first, until all but belief_partner_mass of the posterior is covered or
+    # belief_partner_max of them are kept, their weights renormalised (the mass left out is
+    # in the record); a hinderer without a goal of its own (hinder_own_goal=False) sets
+    # nothing down for itself, so its destinations are one hypothesis per object (the most
+    # likely destination standing for them).  The partner's idle mode is left out of the
+    # plan (the partner predicted by its greedy choice under each hypothesis).  Still given,
+    # as the model gives them to every robot: the partner's level, weight and tau, its update
+    # rule and its greedy choice with inertia.  "oracle": the partner's true goals (the rule
+    # until this evening: an oracle of its type).  belief_partner_max = 1: the most likely
+    # hypothesis alone (certainty equivalence).  Folders ..._bpinf (_bpm<mass>, _bpk<max>
+    # where not the defaults) under "inferred"; "oracle" names nothing (the folders of before).
+    belief_partner: str = "inferred"
+    belief_partner_mass: float = 0.05
+    belief_partner_max: int = 4
     # The first transitions' joint actions, forced (2026-11-05; "the first 20 transitions as
     # before"): a history to start from -- e.g. the first 20 transitions of a rollout in which
     # the hinderer took the coercer's object -- the robots watching it and updating their
@@ -944,6 +976,13 @@ class Config:
         _one_of(self, "belief_planning", ("off", "frozen", "updated"))
         _one_of(self, "belief_interpolation", ("segment", "nearest"))
         _one_of(self, "belief_tail", ("frozen", "cap"))
+        _one_of(self, "belief_partner", ("inferred", "oracle"))
+        if not (np.isfinite(self.belief_partner_mass) and 0.0 <= self.belief_partner_mass < 1.0):
+            raise ValueError("belief_partner_mass must lie in [0, 1)")
+        if (isinstance(self.belief_partner_max, (bool, np.bool_))
+                or not isinstance(self.belief_partner_max, (int, np.integer))
+                or self.belief_partner_max < 1):
+            raise ValueError("belief_partner_max must be an int >= 1")
         for name in ("objective_goals", "belief_planning_goals"):
             goals = getattr(self, name)
             if isinstance(goals, str):

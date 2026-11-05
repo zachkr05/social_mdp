@@ -20,6 +20,11 @@
 # rollout already saved is kept.  Logs in logs/belief_scenes/, records and videos in
 # output/object_inference_<scene>_..._<options>/.
 #
+# PARTNER (2026-11-05 evening; Config.belief_partner): whom the belief planner takes the hinderer
+# to be -- unset or "inferred" (the default of the code since then: the hypotheses of the
+# coercer's own posteriors, folders _bpinf), or "oracle" (its true goals, the folders of this
+# morning's batch).
+#
 # Environment: SCENES (default "gate_few near_miss hall_crossing head_on_corridor"), STEPS
 # (60), TAU (0.2), CONDITIONS (default "updated:task off:task frozen:task updated:table
 # off:table frozen:table"), NOVIDEO (0), THREADS (0 = every CPU).
@@ -42,7 +47,7 @@ for c in $CONDITIONS; do
       *)     mem=10; plan="--belief-points 12 --belief-refinements 1 --belief-horizon 30" ;;
     esac
     args="--scene $sc --objective $objective --max-memory-gib $mem"
-    [ "$planner" != off ] && args="$args --belief-planning $planner $plan"
+    [ "$planner" != off ] && args="$args --belief-planning $planner $plan${PARTNER:+ --belief-partner $PARTNER}"
     log="$LOGS/${sc}_${planner}_${objective}.log"
     echo "$(date '+%F %T') start $sc $planner/$objective"
     if $PY -u examples/run_object_inference.py $FLAGS $args > "$log" 2>&1 < /dev/null; then

@@ -67,6 +67,13 @@ def main() -> None:
                 + (f"/{names[d['partner_actual']]}" if d.get("partner_actual") is not None else "")
                 + f"  points {d['points']}  {d['timing']['total']:.0f}s")
         print(line)
+        if d.get("hypotheses"):
+            pred = d.get("partner_prediction") or {}
+            print(f"        partner taken to be ({d.get('covered', 1.0):.2f} of the posterior): "
+                  + "; ".join(f"{h['social']} O{h['object'] + 1}/G{h['destination']} "
+                              f"{h['weight']:.2f}" for h in d["hypotheses"])
+                  + ("; predicted " + ", ".join(f"{a} {v:.2f}" for a, v in pred.items())
+                     if pred else ""))
         now = d["now"]
         print(f"        partner's belief now: {fmt_obj(now['object'])}; destination "
               + " ".join(f"{v:.2f}" for v in now["destination"])

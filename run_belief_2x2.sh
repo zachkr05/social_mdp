@@ -9,6 +9,8 @@
 #     sh run_belief_2x2.sh                         # tau 0.2, 60 transitions, the six runs
 #     TAU=0.2 HAZARD=0.02 sh run_belief_2x2.sh     # ... the hinderer's goal hazard 0.02
 #     ONLY="updated:task" sh run_belief_2x2.sh     # one condition (planner:objective)
+#     PARTNER=oracle sh run_belief_2x2.sh          # the hinderer's true goals in the plan (the
+#                                                  # rule of the morning; default: inferred)
 #
 # The decoy (2026-11-05; social_pairings/README.md, "What it found"): only the hinderer may
 # take, and the hinderer has lifted the coercer's object while the coercer waited beside the
@@ -39,7 +41,7 @@ for c in $CONDITIONS; do
   planner=${c%%:*}
   objective=${c##*:}
   args="--objective $objective"
-  [ "$planner" != off ] && args="$args --belief-planning $planner"
+  [ "$planner" != off ] && args="$args --belief-planning $planner${PARTNER:+ --belief-partner $PARTNER}"
   echo "== $planner / $objective"
   $PY -u examples/run_object_inference.py $FLAGS $args $EXTRA --verbose \
     > "$LOGS/${planner}_${objective}.log" 2>&1

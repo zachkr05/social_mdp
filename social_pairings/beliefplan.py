@@ -20,16 +20,27 @@ action (its inertia), s' the true transition.  The timing is the robots': the pa
 a_p with m, before it sees a_r; it updates to F(m; ...) after; the next choice uses that.
 
 * **The partner, predicted.**  By its own model: its root re-solved at belief m (one model,
-  on scratch arrays: :meth:`BeliefPlanner._partner_tables`), greedy with
+  on scratch arrays: :meth:`BeliefPlanner._partner_batch`), greedy with
   ``util.argmax_action``'s tie-break and its inertia (``Config.inertia``) -- the rule it acts
-  by.  So robot r knows its partner's social goal, weight and level (an oracle -- said so in
-  the record), and reconstructs its belief from the history both see (the partner's prior,
-  update rule and observations are those of the model: ``SocialMDP.about[r]`` is exactly
-  what the partner holds).  The dynamics are the true ones: the partner's goal known.
-* **What robot r is paid.**  ``SocialMDP.modeled_reward`` with that one hypothesis about the
-  partner (:func:`beliefkernels.joint_rewards`, :func:`beliefkernels.nested_row`); under
-  ``Config.objective="task"`` the partner's estimate of robot r's goal reward inside R_j is
-  its true goal reward; under "complete" the bonus for the goal actually done.
+  by -- under a hypothesis about its goals (:class:`_Hyp`).  Robot r reconstructs its belief
+  from the history both see (the partner's prior, update rule and observations are those of
+  the model: ``SocialMDP.about[r]`` is exactly what the partner holds).
+* **Whom robot r takes its partner to be** (``Config.belief_partner``, the user of
+  2026-11-05 evening: "everything is inferred and nothing is I guess truly known. Red should
+  infer the belief from green then apply to formula to manipulate it").  "inferred" (the
+  default): the hypotheses (physical goal, social goal) of robot r's own posteriors about
+  the partner (``SocialMDP.about[p]``, Eqs. 5-6) that hold most of their mass
+  (:meth:`BeliefPlanner._hypotheses`) -- the plan above made under each, the dynamics those
+  of a world whose partner has that goal, and the action chosen by the posterior-weighted Q
+  of the plans (QMDP: Littman, Cassandra & Kaelbling 1995 -- the partner's type as if known
+  from the next step on, robot r's own posterior held within a plan as Eq. 4 holds it).
+  "oracle": the partner's true goals and the true dynamics (the rule until then), said so
+  in the record.  Either way the partner's level, weight, tau, update rule and greedy
+  choice are the model's, as every robot is given them.
+* **What robot r is paid.**  ``SocialMDP.modeled_reward`` with the one hypothesis about the
+  partner of each plan (:func:`beliefkernels.joint_rewards`, :func:`beliefkernels.nested_row`);
+  under ``Config.objective="task"`` the partner's estimate of robot r's goal reward inside
+  R_j is its true goal reward; under "complete" the bonus for the goal actually done.
 * **The beliefs.**  Belief points: the partner's belief now (point 0, exact), the beliefs it
   would form if robot r acted by each of the hypotheses it holds about it (its level-1
   models -- "probes"), and those along the planned way (``Config.belief_refinements``
@@ -54,6 +65,7 @@ No reward for deceiving (kappa = 0): a decoy is worth what it brings the real ta
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass, replace
 from typing import Optional
 
 import numpy as np
@@ -74,18 +86,70 @@ LL_F64_BYTES = 1.5 * 2 ** 30
 ORACLE = ("the partner's own model, re-solved at each belief: its social goal, weight, level "
           "and update rule known to the planner (an oracle); its belief reconstructed from "
           "the history both robots see")
+INFERRED = ("the partner's own model under each hypothesis about its goals that the robot's "
+            "posteriors about it hold (the most likely, Config.belief_partner_mass / _max), "
+            "re-solved at each belief; the plans weighted by those posteriors (QMDP); its "
+            "level, weight, tau, update rule and greedy choice the model's; its belief "
+            "reconstructed from the history both robots see")
 
 
 class _OneModel:
     """Row ``row`` of a bank n times over, renumbered 0 .. n - 1, on scratch arrays P, pd,
     ho: what ``SocialMDP._solve`` reads when the partner's root is re-solved at n belief
-    points in one batch (each copy its own row of P, pd and ho)."""
+    points in one batch (each copy its own row of P, pd and ho).  ``over``: agent, var,
+    svar, social and zero in place of the row's (the partner's root under a hypothesis
+    about its goals, :class:`_Hyp`)."""
 
-    def __init__(self, bank, row: int, P, pd, ho, n: int = 1) -> None:
+    def __init__(self, bank, row: int, P, pd, ho, n: int = 1, over: Optional[dict] = None
+                 ) -> None:
         self.P, self.pd, self.ho = P, pd, ho
         self.p_of = np.arange(n, dtype=np.int64)
         for name in ("agent", "var", "svar", "social", "zero"):
-            setattr(self, name, np.ascontiguousarray(np.repeat(getattr(bank, name)[[row]], n)))
+            value = (getattr(bank, name)[[row]] if over is None
+                     else np.array([over[name]], dtype=np.int64))
+            setattr(self, name, np.ascontiguousarray(np.repeat(value, n)))
+
+
+@dataclass(eq=False)
+class _Hyp:
+    """A hypothesis about the partner's goals that robot r plans against
+    (``Config.belief_partner``): its physical goal ``goal`` (an index of the partner's
+    ``pg_obj`` / ``pg_dst``) and social goal ``social`` (``goals.SOCIAL_GOALS``), its weight
+    in the decision (robot r's posterior mass, renormalised over the hypotheses kept) and
+    the (goal, social goal, mass) it stands for (a goal-less hinderer's destinations are
+    one hypothesis); and what a plan needs under it: ``tab`` the world's hands with a
+    partner of that goal (``ObjectWorld._table``; the true table under the oracle),
+    ``events`` the partner's acts for robot r that fail or are in vain there, and the
+    partner's root under it -- ``over`` (agent, var, svar, social, zero), ``slot`` (the
+    root's slot with ``group`` the hypothesis' physical goal), ``task_nested`` (the
+    partner's estimate of its own goal reward inside its R_j its true goal's,
+    ``Config.objective="task"`` for its social goal).  ``oracle``: the partner's true
+    goals, its root as the rollout solved it."""
+    goal: int
+    social: int
+    weight: float
+    members: list
+    tab: np.ndarray
+    events: tuple
+    over: Optional[dict] = None
+    slot: object = None
+    task_nested: bool = False
+    oracle: bool = False
+
+    @property
+    def key(self) -> tuple:
+        return (int(self.goal), int(self.social))
+
+
+def _same_goal(tab: np.ndarray, done: np.ndarray, terminal: int) -> np.ndarray:
+    """``tab`` (B, nEv) for a world in which the partner's goal is the robot's own (its
+    object on its destination): whoever sets it down there finishes both goals -- every
+    successor with one goal done is the terminal block (both done).  The hands rule sets one
+    done flag per set-down (the true world's goal objects are two)."""
+    out = np.array(tab, copy=True)
+    one = done[:, 0] != done[:, 1]                                         # (B,)
+    out[one[out]] = terminal
+    return out
 
 
 def _first(q: np.ndarray, k: int) -> list:
@@ -124,86 +188,189 @@ class BeliefPlanner:
             self.events[r] = self._event_tables(w, 1 - r)
         self.decisions: list = []
         self.clock: dict = {}                 # seconds by stage, over the rollout
-        self.keep: dict = {}                  # per robot: the last decision's points (warm starts)
+        # per (robot, hypothesis key): the last decision's points (warm starts)
+        self.keep: dict = {}
         self._LL = None                       # (S, 10, PG, T) buffer
         self.likelihood_dtype = None
         self._base = None                     # (S, 10, 10) buffer
+        self._hyp_cache: dict = {}            # (robot, hypothesis key) -> its tables
 
     # ---- static tables -----------------------------------------------------------------------
     @staticmethod
-    def _event_tables(w, p: int):
+    def _event_tables(w, p: int, gs=None, own=(0, 1), true=None, same_goal: bool = False):
         """(failed, in vain) (B, nEv) uint8: the partner p's set-down for its partner that did
         nothing but would have finished the partner's goal elsewhere, and its hand-over the
         partner did not take -- ``ObjectWorld.real_step``'s ``failed[p]`` and
-        ``handed_in_vain[p]``, by block and event (its "anywhere" run, as a table)."""
-        gs = [int(w.site_of[d]) for d in w.true_dest]
-        anywhere = (-2 if p == 0 else gs[1], -2 if p == 1 else gs[0])
-        acc = tuple(-2 if rr == 1 - p else rr for rr in (0, 1))
-        anyw = w._table(tuple(gs), anywhere, (0, 1), (True, True), (0, 1), acc).astype(np.int64)
-        true = w.true_tab.astype(np.int64)
+        ``handed_in_vain[p]``, by block and event (its "anywhere" run, as a table).  ``gs``
+        (2,): each robot's destination site, ``own`` (2,): each robot's goal object, ``true``
+        the table of that world -- the world's own (its true destinations, objects (0, 1)
+        and ``true_tab``) by default, a world whose partner has the goals of a hypothesis
+        otherwise (:meth:`_hyp`; ``same_goal``: its goal the robot's own, :func:`_same_goal`)."""
+        r = 1 - p
+        if gs is None:
+            gs = [int(w.site_of[d]) for d in w.true_dest]
+        anywhere = [0, 0]
+        anywhere[p], anywhere[r] = -2, int(gs[p])
+        acc = [int(own[0]), int(own[1])]
+        acc[r] = -2
+        own = tuple(int(x) for x in own)
+        anyw = w._table(tuple(int(g) for g in gs), tuple(anywhere), own, (True, True), own,
+                        tuple(acc))
+        if same_goal:
+            anyw = _same_goal(anyw, w.done, w.T)
+        anyw = anyw.astype(np.int64)
+        true = (w.true_tab if true is None else true).astype(np.int64)
         differ = anyw != true
         done_differ = (w.done[anyw] != w.done[true]).any(axis=-1)
         return ((differ & done_differ).astype(np.uint8),
                 (differ & ~done_differ).astype(np.uint8))
 
+    # ---- whom the partner is taken to be (Config.belief_partner) -----------------------------
+    def _hyp(self, mdp, r: int, goal: int, social: int, weight: float, members: list,
+             oracle: bool) -> _Hyp:
+        """The hypothesis (partner's physical goal ``goal``, social goal ``social``) with what
+        a plan needs under it -- the tables cached per (robot, hypothesis)."""
+        w, cfg = mdp.w, mdp.cfg
+        p = 1 - r
+        K = mdp.PG
+        key = (r, int(goal), int(social), bool(oracle))
+        if key not in self._hyp_cache:
+            if oracle:
+                self._hyp_cache[key] = dict(tab=w.true_tab, events=self.events[r], over=None,
+                                            slot=None, task_nested=False)
+            else:
+                obj, dst = int(mdp.pg_obj[p][goal]), int(mdp.pg_dst[p][goal])
+                gs, ds, own = [0, 0], [0, 0], [0, 0]
+                gs[r], gs[p] = int(w.site_of[w.true_dest[r]]), int(w.dest_site[dst])
+                ds[r], ds[p] = gs[p], gs[r]          # a set-down for the partner counts there
+                own[r], own[p] = r, obj              # each robot's goal object
+                tab = w._table(tuple(gs), tuple(ds), tuple(own), (True, True), tuple(own),
+                               tuple(own))
+                # the partner's goal the robot's own (its object on its destination): one
+                # set-down finishes both
+                same = obj == r and gs[p] == gs[r]
+                if same:
+                    tab = _same_goal(tab, w.done, w.T)
+                zero = bool(mdp._no_term(p, int(social)))
+                self._hyp_cache[key] = dict(
+                    tab=tab, events=self._event_tables(w, p, gs, own, tab, same),
+                    over=dict(agent=p, var=p * K + int(goal), svar=2 * K + p * K + int(goal),
+                              social=int(not zero), zero=int(zero)),
+                    slot=replace(mdp.root_slot(p), group=int(goal)),
+                    task_nested=(cfg.objective == "task" and int(social) in
+                                 {G.parse_goal(g) for g in cfg.objective_goals}))
+        c = self._hyp_cache[key]
+        return _Hyp(int(goal), int(social), float(weight), members or [], c["tab"], c["events"],
+                    c["over"], c["slot"], c["task_nested"], bool(oracle))
+
+    def _oracle(self, mdp, r: int) -> _Hyp:
+        """The partner's true goals, the true world (``Config.belief_partner="oracle"``)."""
+        g, t = int(mdp.own_goal[1 - r]), int(mdp.goals[1 - r])
+        return self._hyp(mdp, r, g, t, 1.0, [(g, t, 1.0)], True)
+
+    def _hypotheses(self, mdp, r: int) -> tuple:
+        """-> (the hypotheses robot r plans against, the posterior mass they cover before
+        renormalising).  ``Config.belief_partner="oracle"``: the partner's true goals.
+        "inferred": robot r's posteriors about its partner (Eq. 4's planning weights,
+        b_g(g) b_xi(xi)), the most likely hypotheses first until all but
+        ``belief_partner_mass`` is covered or ``belief_partner_max`` are kept; a hinderer
+        without a goal of its own sets nothing down for itself and is one hypothesis per
+        object, its most likely destination standing for the others."""
+        cfg = mdp.cfg
+        p = 1 - r
+        if cfg.belief_partner == "oracle":
+            return [self._oracle(mdp, r)], 1.0
+        about = mdp.about[p]
+        phys = about.phys()
+        soc = about.social()
+        types = [int(t) for t in mdp.hyp_goals[r]]
+        if soc is None:                      # (a partner below level 2: never planned against)
+            soc = np.ones(1)
+            types = [int(mdp.goals[p])]
+        groups: dict = {}
+        for ti, t in enumerate(types):
+            spoiler = t == G.HINDER and not cfg.hinder_own_goal
+            for g in range(mdp.PG):
+                mass = float(phys[g] * soc[ti])
+                if not mass > 0.0:
+                    continue
+                gkey = ("object", int(mdp.pg_obj[p][g]), t) if spoiler else (g, t)
+                groups.setdefault(gkey, []).append((g, t, mass))
+        ranked = []
+        for members in groups.values():
+            total = sum(m for _, _, m in members)
+            g_rep = max(members, key=lambda x: (x[2], -x[0]))[0]
+            ranked.append((total, g_rep, members[0][1], members))
+        ranked.sort(key=lambda x: (-x[0], x[1], x[2]))
+        kept, covered = [], 0.0
+        for total, g, t, members in ranked:
+            kept.append((total, g, t, members))
+            covered += total
+            if (covered >= 1.0 - cfg.belief_partner_mass
+                    or len(kept) >= cfg.belief_partner_max):
+                break
+        norm = sum(x[0] for x in kept)
+        return ([self._hyp(mdp, r, g, t, total / norm, members, False)
+                 for total, g, t, members in kept], float(covered))
+
     # ---- the partner's model at a belief ---------------------------------------------------------
-    def _q(self, mdp, bank, row: int, R, P, V, m: int, g: int, pd, ho, ok, lo, hi):
-        """The Q of a model at every state of the items (``SocialMDP.q_values``)."""
+    def _q(self, mdp, bank, row: int, R, P, V, m: int, g: int, pd, ho, ok, lo, hi,
+           over: Optional[dict] = None):
+        """The Q of a model at every state of the items (``SocialMDP.q_values``); ``over``:
+        the model's agent, var, svar, social and zero in place of the row's."""
         w = mdp.w
-        o = int(bank.agent[row])
+        if over is None:
+            o, sc, fx = int(bank.agent[row]), int(bank.social[row]), bool(bank.zero[row])
+            var, svar = int(bank.var[row]), int(bank.svar[row])
+        else:
+            o, sc, fx = int(over["agent"]), int(over["social"]), bool(over["zero"])
+            var, svar = int(over["var"]), int(over["svar"])
         out = np.full((w.S, N_ACTIONS), -np.inf)
-        q_table(R, P, V, m, g, o, int(bank.social[row]), bool(bank.zero[row]),
-                mdp.tabs[bank.var[row]], mdp.tabs[bank.svar[row]], lo, hi, w.N, w.psucc,
+        q_table(R, P, V, m, g, o, sc, fx, mdp.tabs[var], mdp.tabs[svar], lo, hi, w.N, w.psucc,
                 w.psucc_T, w.pev, w.pev_T, mdp.valid_by, w.busy, mdp.useok, w.uctx, w.site_of,
                 w.goal_at_site, pd, ho, mdp.infer_object, mdp.done, w.vdone, w.hold, w.gone,
                 ok, self.gamma, out)
         return out
 
-    def _partner_tables(self, mdp, r: int, belief: Optional[tuple], ok, lo, hi, warm):
+    def _partner_tables(self, mdp, r: int, belief: Optional[tuple], ok, lo, hi, warm,
+                        H: Optional[_Hyp] = None):
         """The partner's Q at every state with its belief about robot r ``belief`` = (lp, ls,
-        q) -- its root re-solved there on scratch arrays (None: as the rollout solved it, at
-        the belief it holds) -> (Q (S, 10), V (S,) for a warm start, solver stats)."""
-        w = mdp.w
-        p = 1 - r
-        depth, row = mdp.root[p]
-        bank = mdp.bank(depth)
-        if belief is None:
+        q), under hypothesis H -- its root re-solved there on scratch arrays (None: under
+        the oracle, as the rollout solved it at the belief it holds) -> (Q (S, 10), V (S,)
+        for a warm start, solver stats).  H None: the oracle's (the partner's true goals)."""
+        if H is None:
+            H = self._oracle(mdp, r)
+        if belief is None and H.oracle:
+            p = 1 - r
+            depth, row = mdp.root[p]
+            bank = mdp.bank(depth)
             Q = self._q(mdp, bank, row, bank.R, bank.P, bank.V, row, int(bank.p_of[row]),
                         bank.pd, bank.ho, ok, lo, hi)
             return Q, bank.V[row].copy(), None
-        lp, ls, q = belief
-        about = [None, None]
-        about[p] = mdp.about[p]
-        about[r] = PartnerBelief(lp.copy(), None if ls is None else ls.copy(), float(q))
-        slot = mdp.root_slot(p)
-        S, A = w.S, N_ACTIONS
-        P = np.zeros((1, S, A))
-        R = np.zeros((1, S, A), dtype=np.float32)
-        pd = np.zeros((1, w.B, w.K, w.N, A))
-        ho = np.zeros((1, S, A)) if mdp.infer_object else np.zeros((1, 1, A))
-        rows = np.array([row], dtype=np.int64)
-        t0 = time.perf_counter()
-        inputs_typed(*mdp._input_args(depth, slot, rows, [bank.key[row]],
-                                      out=(P, 0, R, pd, ho), about=about))
-        t1 = time.perf_counter()
-        V = np.ascontiguousarray((bank.V[row] if warm is None else warm)[None, :].copy())
-        st = mdp._solve(V, R, _OneModel(bank, row, P, pd, ho), np.zeros(1, dtype=np.int64),
-                        [mdp.solved_blocks(bank, row)])
-        t2 = time.perf_counter()
-        Q = self._q(mdp, bank, row, R, P, V, 0, 0, pd, ho, ok, lo, hi)
-        self.clock["partner_inputs"] = self.clock.get("partner_inputs", 0.0) + t1 - t0
-        self.clock["partner_solve"] = self.clock.get("partner_solve", 0.0) + t2 - t1
-        self.clock["partner_q"] = self.clock.get("partner_q", 0.0) + time.perf_counter() - t2
-        return Q, V[0].copy(), st[0]
+        if belief is None:
+            m0 = mdp.about[r]
+            belief = (m0.log_phys, m0.log_social, float(m0.idle))
+        return self._partner_batch(mdp, r, [belief], ok, lo, hi, [warm], H)[0]
 
-    def _partner_batch(self, mdp, r: int, beliefs: list, ok, lo, hi, warm: list) -> list:
-        """:meth:`_partner_tables` at several beliefs, the partner's root re-solved at all of
-        them in one call of the solver -> [(Q (S, 10), V (S,), solver stats)]."""
+    def _partner_batch(self, mdp, r: int, beliefs: list, ok, lo, hi, warm: list,
+                       H: Optional[_Hyp] = None) -> list:
+        """:meth:`_partner_tables` at several beliefs, the partner's root (under hypothesis
+        H; None: the oracle's) re-solved at all of them in one call of the solver -> [(Q (S,
+        10), V (S,), solver stats)]."""
+        if H is None:
+            H = self._oracle(mdp, r)
         w = mdp.w
         p = 1 - r
         depth, row = mdp.root[p]
         bank = mdp.bank(depth)
-        slot = mdp.root_slot(p)
+        if H.oracle:
+            slot, keys, flags, over = mdp.root_slot(p), [bank.key[row]], None, None
+            blocks = mdp.solved_blocks(bank, row)
+        else:
+            slot, keys, over = H.slot, [int(H.social)], H.over
+            flags = ([over["social"]], [over["zero"]])
+            full = mdp.reach_of(p, int(H.goal), int(bank.block[row]))
+            blocks = full[w.done[full, p] == 0] if over["zero"] else full
         n, S, A = len(beliefs), w.S, N_ACTIONS
         P = np.zeros((n, S, A))
         R = np.zeros((n, S, A), dtype=np.float32)
@@ -216,16 +383,24 @@ class BeliefPlanner:
             about = [None, None]
             about[p] = mdp.about[p]
             about[r] = PartnerBelief(lp.copy(), None if ls is None else ls.copy(), float(q))
-            inputs_typed(*mdp._input_args(depth, slot, rows, [bank.key[row]],
-                                          out=(P, i, R[i:i + 1], pd, ho), about=about))
+            nested = None
+            if not H.oracle:                 # the partner's estimate of its own goal reward
+                if H.task_nested:
+                    nested = np.zeros(mdp.PG)
+                    nested[int(H.goal)] = 1.0
+                else:
+                    nested = about[p].phys()
+            inputs_typed(*mdp._input_args(depth, slot, rows, keys,
+                                          out=(P, i, R[i:i + 1], pd, ho), about=about,
+                                          flags=flags, nested=nested))
             V[i] = bank.V[row] if warm[i] is None else warm[i]
         t1 = time.perf_counter()
-        st = mdp._solve(V, R, _OneModel(bank, row, P, pd, ho, n), np.arange(n, dtype=np.int64),
-                        [mdp.solved_blocks(bank, row)] * n)
+        st = mdp._solve(V, R, _OneModel(bank, row, P, pd, ho, n, over),
+                        np.arange(n, dtype=np.int64), [blocks] * n)
         t2 = time.perf_counter()
         out = []
         for i in range(n):
-            Q = self._q(mdp, bank, row, R, P, V, i, i, pd, ho, ok, lo, hi)
+            Q = self._q(mdp, bank, row, R, P, V, i, i, pd, ho, ok, lo, hi, over)
             out.append((Q, V[i].copy(), st[i]))
         self.clock["partner_inputs"] = self.clock.get("partner_inputs", 0.0) + t1 - t0
         self.clock["partner_solve"] = self.clock.get("partner_solve", 0.0) + t2 - t1
@@ -280,23 +455,28 @@ class BeliefPlanner:
         return LL
 
     # ---- one belief transition, at one state ---------------------------------------------------
-    def _ctx(self, mdp, r: int, LL):
-        """The arguments of :func:`beliefkernels.belief_update` after (lp, ls, q, s, a_r, a_p)."""
+    def _ctx(self, mdp, r: int, LL, H: _Hyp):
+        """The arguments of :func:`beliefkernels.belief_update` after (lp, ls, q, s, a_r, a_p),
+        in the world of hypothesis H."""
         w, cfg = mdp.w, mdp.cfg
-        failed, vain = self.events[r]
+        failed, vain = H.events
         has_social = mdp.about[r].log_social is not None
         return (r, w.N, LL, mdp.log_idle[r], w.busy, w.hold, w.done,
                 np.ascontiguousarray(mdp.pg_obj[r]), np.ascontiguousarray(mdp.pg_dst[r]),
                 w.M, w.K, np.ascontiguousarray(w.dest), int(w.true_dest[r]), w.iscand,
-                w.site_of, failed, vain, w.true_tab, w.pev, w.psucc, has_social,
+                w.site_of, failed, vain, H.tab, w.pev, w.psucc, has_social,
                 not mdp.known_social, bool(cfg.belief_factored), bool(cfg.belief_stages),
                 float(cfg.likelihood_power), float(cfg.hand_hazard), float(cfg.goal_hazard),
                 float(cfg.social_hazard), bool(cfg.idle_hypothesis), float(cfg.idle_hazard),
                 bool(cfg.condition_on_placement))
 
-    def step_belief(self, mdp, r: int, LL, belief: tuple, s: int, a_r: int, a_p: int) -> tuple:
+    def step_belief(self, mdp, r: int, LL, belief: tuple, s: int, a_r: int, a_p: int,
+                    H: Optional[_Hyp] = None) -> tuple:
         """The partner's belief about robot r after (a_r, a_p) at s, from ``belief`` = (lp,
-        ls, q): :func:`beliefkernels.belief_update` -> (lp, ls, q)."""
+        ls, q), in the world of hypothesis H (None: the true one):
+        :func:`beliefkernels.belief_update` -> (lp, ls, q)."""
+        if H is None:
+            H = self._oracle(mdp, r)
         lp, ls, q = belief
         PG = lp.size
         ls_in = ls if ls is not None else np.zeros(1)
@@ -304,7 +484,7 @@ class BeliefPlanner:
         lp_out, ls_out = np.empty(PG), np.empty(T)
         W = max(mdp.w.M, mdp.w.K, PG)
         q1 = belief_update(lp, ls_in, float(q), int(s), int(a_r), int(a_p),
-                           *self._ctx(mdp, r, LL), lp_out, ls_out, np.empty((8, PG)),
+                           *self._ctx(mdp, r, LL, H), lp_out, ls_out, np.empty((8, PG)),
                            np.empty((PG, T)), np.empty((3, T)), np.empty((6, W)),
                            np.empty(PG, dtype=np.bool_))
         return lp_out, (ls_out if ls is not None else None), float(q1)
@@ -330,7 +510,7 @@ class BeliefPlanner:
             return None
         tic = time.perf_counter()
         timing = {}
-        S, NN, N = w.S, w.NN, w.N
+        NN = w.NN
         s0 = int(w.sid(state))
         blocks = mdp.reach_of(r, mdp.own_goal[r], c0)
         ok = np.zeros_like(w.state_ok)
@@ -339,102 +519,167 @@ class BeliefPlanner:
         legal = self.legal[r]
         u0 = NO_UNDO if (undo[p] is None or self.margin <= 0.0) else int(undo[p])
         m0 = mdp.about[r]
-        has_social = m0.log_social is not None
         point0 = (m0.log_phys.copy(), None if m0.log_social is None else m0.log_social.copy(),
                   float(m0.idle))
-        # ---- the partner at point 0: as the rollout solved it
-        Q0, Vp0, _ = self._partner_tables(mdp, r, None, ok, lo, hi, None)
-        b0, a0 = np.empty(S, dtype=np.int8), np.empty(S, dtype=np.int8)
-        choice_tables(Q0, self.margin, b0, a0)
-        a_p0 = int(a0[s0] if u0 == b0[s0] else b0[s0])
-        # ---- what robot r is paid
+        # ---- whom the partner is taken to be: robot r's posteriors about it (the oracle: its
+        # true goals) -- one plan per hypothesis, the decision their weighted Q
         tic1 = time.perf_counter()
-        base, coef = self._rewards(mdp, r, legal, ok, lo, hi)
-        timing["rewards"] = time.perf_counter() - tic1
+        hyps, covered = self._hypotheses(mdp, r)
+        timing["hypotheses"] = time.perf_counter() - tic1
         LL = None
         if self.mode == "updated":
             tic1 = time.perf_counter()
             LL = self._likelihoods(mdp, r, ok, lo, hi)
             timing["likelihoods"] = time.perf_counter() - tic1
-        # ---- the points
-        pts = _Points(self, mdp, r, ok, lo, hi, base, coef, legal)
-        pts.add(point0, tables=(b0, a0, Vp0))
-        rec = dict(transition=t + 1, robot=r, mode=self.mode, response=ORACLE,
+        H_steps, zero_tail = self._horizon(t)
+        plans = []
+        for n, H in enumerate(hyps):
+            tic1 = time.perf_counter()
+            plans.append(self._plan(mdp, r, H, s0, u0, point0, LL, ok, lo, hi, legal, H_steps,
+                                    zero_tail, verbose=cfg.verbose and n == 0))
+            timing[f"hypothesis_{n}"] = time.perf_counter() - tic1
+        weights = np.array([H.weight for H in hyps])
+
+        def mix(name):
+            qs = [x[name] for x in plans]
+            if any(q is None for q in qs):
+                return None
+            stack = np.stack(qs)
+            fin = np.isfinite(stack).all(axis=0)
+            out = np.full(N_ACTIONS, -np.inf)
+            out[fin] = weights @ stack[:, fin]
+            return out
+
+        q, qf, qh = mix("q"), mix("q_frozen"), mix("q_hold")
+        prediction = np.zeros(N_ACTIONS)
+        for H, x in zip(hyps, plans):
+            prediction[x["partner_predicted"]] += H.weight
+        a_pred = int(np.argmax(prediction))
+        top = plans[0]
+        rec = dict(transition=t + 1, robot=r, mode=self.mode,
+                   response=ORACLE if hyps[0].oracle else INFERRED,
                    likelihood_dtype=self.likelihood_dtype,
                    objective=self._objective(mdp, r), horizon=int(cfg.belief_horizon),
                    partner_undo=None if u0 == NO_UNDO else int(u0),
-                   partner_predicted=a_p0, rounds=[])
-        # the frozen plan: point 0 alone, the belief held (the decision's Q in "frozen" mode;
-        # a diagnostic otherwise)
-        tic1 = time.perf_counter()
-        H, zero_tail = self._horizon(t)
-        Vf1 = pts.backup(H, zero_tail, frozen=True, only=1)
-        qf = pts.q(Vf1, 0, s0, u0, a_p0, hold=True)
-        timing["frozen"] = time.perf_counter() - tic1
-        rec["q_frozen"] = qf
-        if self.mode == "frozen":
-            q = qf
-        else:
-            tic1 = time.perf_counter()
-            probes = self._probes(mdp, r, LL, pts, s0, u0, point0, H)
-            pts.extend(probes, budget=max(1, cfg.belief_points - max(2, cfg.belief_points // 4)))
-            timing["probes"] = time.perf_counter() - tic1
-            q = qh = V1 = None
-            for rnd in range(cfg.belief_refinements + 1):
-                tic1 = time.perf_counter()
-                pts.solve_new()
-                timing[f"points_{rnd}"] = time.perf_counter() - tic1
-                tic1 = time.perf_counter()
-                pts.project(LL)
-                timing[f"projections_{rnd}"] = time.perf_counter() - tic1
-                tic1 = time.perf_counter()
-                V1 = pts.backup(H, zero_tail, frozen=False)
-                q = pts.q(V1, 0, s0, u0, a_p0, hold=False)
-                qh = pts.q(V1, 0, s0, u0, a_p0, hold=True)
-                timing[f"backup_{rnd}"] = time.perf_counter() - tic1
-                if cfg.verbose:
-                    print(f"[pairings]   round {rnd}: {pts.n} points ({timing[f'points_{rnd}']:.1f} s"
-                          f" solving), projections {timing[f'projections_{rnd}']:.1f} s, backup "
-                          f"{timing[f'backup_{rnd}']:.1f} s", flush=True)
-                plans = [self._simulate(mdp, r, LL, pts, V1, s0, u0, point0, H, first)
-                         for first in _first(q, 3)]
-                residual = [x["residual"] for plan in plans for x in plan]
-                rec["rounds"].append(dict(points=pts.n, residual_max=float(max(residual, default=0.0)),
-                                          residual_mean=float(np.mean(residual)) if residual else 0.0))
-                if rnd == cfg.belief_refinements:
-                    break
-                cands = [x["belief"] for plan in plans for x in plan
-                         if x["residual"] > cfg.belief_spacing]
-                if not cands or not pts.extend(cands, budget=cfg.belief_points):
-                    break
+                   partner_predicted=a_pred,
+                   partner_prediction={ACTION_NAMES[a]: float(prediction[a])
+                                       for a in np.flatnonzero(prediction > 0).tolist()},
+                   covered=covered, rounds=top["rounds"], q_frozen=qf)
+        rec["hypotheses"] = [dict(object=int(mdp.pg_obj[p][H.goal]),
+                                  destination=int(mdp.pg_dst[p][H.goal]),
+                                  social=G.goal_name(H.social), weight=float(H.weight),
+                                  members=len(H.members),
+                                  mass=float(sum(m for _, _, m in H.members)),
+                                  q=x["q"], q_frozen=x["q_frozen"],
+                                  partner_predicted=int(x["partner_predicted"]),
+                                  points=int(x["points"]))
+                             for H, x in zip(hyps, plans)]
+        if self.mode != "frozen":
             rec["q_hold"] = qh
             with np.errstate(invalid="ignore"):
                 rec["delta_belief"] = np.where(np.isfinite(q), q - qh, np.nan)
-            rec["plan"] = [{k: v for k, v in x.items() if k != "belief"} for x in plans[0]]
-            rec["after"] = {ACTION_NAMES[a]: self._summary(mdp, r, pts.after(LL, s0, a, a_p0))
-                            for a in np.flatnonzero(legal[s0]).tolist()}
+            rec["plan"] = top["plan"]
+            rec["after"] = top["after"]
         rec["q"] = q
         fin = np.isfinite(q)
         order = _first(q, 2)
         rec["best_action"] = order[0] if order else None
         rec["runner_up"] = order[1] if len(order) > 1 else None
         rec["gap"] = float(q[order[0]] - q[order[1]]) if len(order) > 1 else None
-        rec["points"] = pts.n
-        rec["point_beliefs"] = [self._summary(mdp, r, b) for b in pts.beliefs]
+        rec["points"] = top["points"]
+        rec["point_beliefs"] = top["point_beliefs"]
         rec["now"] = self._summary(mdp, r, point0)
-        rec["partner_alternatives"] = dict(best=int(b0[s0]), alt=int(a0[s0]))
+        rec["partner_alternatives"] = top["partner_alternatives"]
         timing["total"] = time.perf_counter() - tic
         rec["timing"] = timing
         rec["finite"] = int(fin.sum())
         self.decisions.append(rec)
-        self.keep[r] = pts.keep()
         if cfg.verbose:
             names = ACTION_NAMES
-            top = ", ".join(f"{names[a]} {q[a]:.3f}" for a in _first(q, 3))
-            print(f"[pairings] belief plan R{r} t={t + 1}: {top}; frozen "
-                  f"{names[_first(qf, 1)[0]]}; partner {names[a_p0]}; {pts.n} points; "
-                  f"{timing['total']:.1f} s", flush=True)
+            best = ", ".join(f"{names[a]} {q[a]:.3f}" for a in _first(q, 3))
+            if hyps[0].oracle:
+                who = "oracle"
+            else:
+                who = "; ".join(f"{G.goal_name(H.social)} O{int(mdp.pg_obj[p][H.goal]) + 1}"
+                                f"/G{int(mdp.pg_dst[p][H.goal])} {H.weight:.2f}" for H in hyps)
+                who = f"{len(hyps)} hypotheses ({covered:.2f} of the posterior): {who}"
+            print(f"[pairings] belief plan R{r} t={t + 1}: {best}; frozen "
+                  f"{names[_first(qf, 1)[0]]}; partner {names[a_pred]} "
+                  f"({prediction[a_pred]:.2f}); {who}; {timing['total']:.1f} s", flush=True)
         return q
+
+    def _plan(self, mdp, r: int, H: _Hyp, s0: int, u0: int, point0: tuple, LL, ok, lo, hi,
+              legal, H_steps: int, zero_tail: bool, verbose: bool = False) -> dict:
+        """The plan of one decision under hypothesis H about the partner's goals: Q updated,
+        held for this one transition, and frozen; the partner's predicted action; the planned
+        way and the points.  (The weighted sum over the hypotheses is the decision,
+        :meth:`_decide`.)"""
+        cfg, w = mdp.cfg, mdp.w
+        S = w.S
+        # ---- the partner at point 0 (the oracle: as the rollout solved it)
+        prev = self.keep.get((r, H.key))
+        warm0 = None
+        if prev is not None and not H.oracle:
+            d = ((prev["Z"] - _Points.embed_point(mdp, r, point0)) ** 2).sum(-1)
+            warm0 = prev["Vp"][int(np.argmin(d))]
+        Q0, Vp0, _ = self._partner_tables(mdp, r, None, ok, lo, hi, warm0, H)
+        b0, a0 = np.empty(S, dtype=np.int8), np.empty(S, dtype=np.int8)
+        choice_tables(Q0, self.margin, b0, a0)
+        a_p0 = int(a0[s0] if u0 == b0[s0] else b0[s0])
+        # ---- what robot r is paid, under H
+        base, coef = self._rewards(mdp, r, legal, ok, lo, hi, H)
+        # ---- the points
+        pts = _Points(self, mdp, r, ok, lo, hi, base, coef, legal, H)
+        pts.add(point0, tables=(b0, a0, Vp0))
+        # the frozen plan: point 0 alone, the belief held (the decision's Q in "frozen" mode;
+        # a diagnostic otherwise)
+        Vf1 = pts.backup(H_steps, zero_tail, frozen=True, only=1)
+        qf = pts.q(Vf1, 0, s0, u0, a_p0, hold=True)
+        out = dict(q_frozen=qf, partner_predicted=a_p0, rounds=[], plan=None, after=None,
+                   q_hold=None)
+        if self.mode == "frozen":
+            q = qf
+        else:
+            probes = self._probes(mdp, r, LL, pts, s0, u0, point0, H_steps, H)
+            pts.extend(probes, budget=max(1, cfg.belief_points - max(2, cfg.belief_points // 4)))
+            q = qh = V1 = None
+            for rnd in range(cfg.belief_refinements + 1):
+                t0 = time.perf_counter()
+                pts.solve_new()
+                t1 = time.perf_counter()
+                pts.project(LL)
+                t2 = time.perf_counter()
+                V1 = pts.backup(H_steps, zero_tail, frozen=False)
+                q = pts.q(V1, 0, s0, u0, a_p0, hold=False)
+                qh = pts.q(V1, 0, s0, u0, a_p0, hold=True)
+                t3 = time.perf_counter()
+                if verbose:
+                    print(f"[pairings]   round {rnd}: {pts.n} points ({t1 - t0:.1f} s"
+                          f" solving), projections {t2 - t1:.1f} s, backup "
+                          f"{t3 - t2:.1f} s", flush=True)
+                plans = [self._simulate(mdp, r, LL, pts, V1, s0, u0, point0, H_steps, first, H)
+                         for first in _first(q, 3)]
+                residual = [x["residual"] for plan in plans for x in plan]
+                out["rounds"].append(dict(points=pts.n,
+                                          residual_max=float(max(residual, default=0.0)),
+                                          residual_mean=float(np.mean(residual)) if residual
+                                          else 0.0))
+                if rnd == cfg.belief_refinements:
+                    break
+                cands = [x["belief"] for plan in plans for x in plan
+                         if x["residual"] > cfg.belief_spacing]
+                if not cands or not pts.extend(cands, budget=cfg.belief_points):
+                    break
+            out["q_hold"] = qh
+            out["plan"] = [{k: v for k, v in x.items() if k != "belief"} for x in plans[0]]
+            out["after"] = {ACTION_NAMES[a]: self._summary(mdp, r, pts.after(LL, s0, a, a_p0))
+                            for a in np.flatnonzero(legal[s0]).tolist()}
+        out["q"] = q
+        out["points"] = pts.n
+        out["point_beliefs"] = [self._summary(mdp, r, b) for b in pts.beliefs]
+        out["partner_alternatives"] = dict(best=int(b0[s0]), alt=int(a0[s0]))
+        self.keep[(r, H.key)] = pts.keep()
+        return out
 
     def observe(self, t: int, act) -> None:
         """After the real transition: what the planning robots chose and what their partners
@@ -449,7 +694,10 @@ class BeliefPlanner:
 
     def record(self) -> dict:
         cfg = self.cfg
-        return dict(robots=list(self.robots), mode=self.mode, response=ORACLE,
+        return dict(robots=list(self.robots), mode=self.mode,
+                    response=ORACLE if cfg.belief_partner == "oracle" else INFERRED,
+                    partner=cfg.belief_partner, partner_mass=cfg.belief_partner_mass,
+                    partner_max=cfg.belief_partner_max,
                     objective=cfg.objective, horizon=cfg.belief_horizon,
                     points=cfg.belief_points, spacing=cfg.belief_spacing,
                     refinements=cfg.belief_refinements, interpolation=cfg.belief_interpolation,
@@ -471,13 +719,14 @@ class BeliefPlanner:
                 return max(1, left), True
         return H, False
 
-    def _rewards(self, mdp, r: int, legal, ok, lo, hi) -> tuple:
+    def _rewards(self, mdp, r: int, legal, ok, lo, hi, H: _Hyp) -> tuple:
         """base (S, 10, 10) f32 and the coefficients of the part that reads the partner's
-        belief (:func:`beliefkernels.nested_row`)."""
+        belief (:func:`beliefkernels.nested_row`) -- the partner of hypothesis H, its social
+        goal and physical goal, in its world."""
         w, cfg = mdp.w, mdp.cfg
         p = 1 - r
-        t_star = int(mdp.goals[p])
-        k_star = int(mdp.own_goal[p])
+        t_star = int(H.social)
+        k_star = int(H.goal)
         obj_k, dst_k = int(mdp.pg_obj[p][k_star]), int(mdp.pg_dst[p][k_star])
         al, be, nu, race_i = mdp.level2_term(r, int(mdp.goals[r]), t_star,
                                              k_star == int(mdp.own_goal[r]))
@@ -488,7 +737,7 @@ class BeliefPlanner:
         if self._base is None or self._base.shape != (w.S, N_ACTIONS, N_ACTIONS):
             self._base = np.zeros((w.S, N_ACTIONS, N_ACTIONS), dtype=np.float32)
         joint_rewards(r, w.N, legal, w.cls_of, w.at_partner, w.cls_obj, w.at_partner_obj,
-                      w.rate_cls, w.fin_cls, w.cost_c, w.done, w.true_tab, w.pev, w.psucc, ok,
+                      w.rate_cls, w.fin_cls, w.cost_c, w.done, H.tab, w.pev, w.psucc, ok,
                       int(mdp.goal_ids[r]), obj_k, dst_k, float(al), float(be), float(nu),
                       float(race_i), float(b1), float(c1), float(mdp.lead),
                       float(mdp.cost_in_partner_reward), complete, bonus, lo, hi, self._base)
@@ -514,10 +763,11 @@ class BeliefPlanner:
                    coef["al"], coef["a1"], coef["c1"], float(mdp.lead), lo, hi, out)
         return out
 
-    def _probes(self, mdp, r: int, LL, pts, s0: int, u0: int, point0: tuple, H: int) -> list:
+    def _probes(self, mdp, r: int, LL, pts, s0: int, u0: int, point0: tuple, H: int,
+                hyp: _Hyp) -> list:
         """The beliefs the partner would form if robot r acted by each hypothesis it holds
         about it (robot r's level-1 models, most likely action; the partner by its choice at
-        the point nearest its belief), H transitions each."""
+        the point nearest its belief), H transitions each, in the world of ``hyp``."""
         w = mdp.w
         p = 1 - r
         T = LL.shape[3]
@@ -544,25 +794,28 @@ class BeliefPlanner:
                     k = pts.nearest(b)
                     best, alt = pts.best[k], pts.alt[k]
                     ap = int(alt[s] if u == best[s] else best[s])
-                    b = self.step_belief(mdp, r, LL, b, s, a, ap)
+                    b = self.step_belief(mdp, r, LL, b, s, a, ap, hyp)
                     out.append(b)
-                    s2, u = self._next(mdp, r, s, a, ap)
+                    s2, u = self._next(mdp, r, s, a, ap, hyp)
                     s = s2
         return out
 
-    def _next(self, mdp, r: int, s: int, a_r: int, a_p: int) -> tuple:
-        """(s', the partner's undo after) of the true transition."""
+    def _next(self, mdp, r: int, s: int, a_r: int, a_p: int, H: _Hyp) -> tuple:
+        """(s', the partner's undo after) of the transition in the world of hypothesis H (the
+        true one under the oracle: ``ObjectWorld.step``)."""
         w = mdp.w
         p = 1 - r
         act = (a_r, a_p) if r == 0 else (a_p, a_r)
-        s2 = int(w.step(s, act))
+        b, pair = divmod(int(s), w.NN)
+        j = act[0] * N_ACTIONS + act[1]
+        s2 = int(H.tab[b, w.pev[pair, j]]) * w.NN + int(w.psucc[pair, j])
         st, st2 = w.unsid(s), w.unsid(s2)
         moved = st2[p] != st[p]
         changed = int(w.hold[st[2], p]) != int(w.hold[st2[2], p])
         return s2, int(undo_code(a_p, moved, changed))
 
     def _simulate(self, mdp, r: int, LL, pts, V1, s0: int, u0: int, point0: tuple, H: int,
-                  first: int) -> list:
+                  first: int, hyp: _Hyp) -> list:
         """The planned way from the root, ``first`` first: robot r by the plan's first step
         at every state (receding horizon, V1), the partner by its choice at the point
         nearest its belief, the belief exactly (step_belief).  -> per transition: robot r's
@@ -585,13 +838,13 @@ class BeliefPlanner:
                 if not cand:
                     break
                 a = cand[0]
-            b = self.step_belief(mdp, r, LL, b, s, a, ap)
+            b = self.step_belief(mdp, r, LL, b, s, a, ap, hyp)
             _, _, _, res = pts.locate(b)
             sm = self._summary(mdp, r, b)
             out.append(dict(step=h + 1, robot=a, partner=ap, residual=float(res), belief=b,
                             object=sm["object"], destination=sm["destination"],
                             social=sm["social"], idle=sm["idle"]))
-            s, u = self._next(mdp, r, s, a, ap)
+            s, u = self._next(mdp, r, s, a, ap, hyp)
         return out
 
     def _summary(self, mdp, r: int, b: tuple) -> dict:
@@ -607,8 +860,8 @@ class _Points:
     every transition's belief; the backward induction."""
 
     def __init__(self, planner: BeliefPlanner, mdp, r: int, ok, lo, hi, base, coef,
-                 legal) -> None:
-        self.pl, self.mdp, self.r = planner, mdp, r
+                 legal, H: _Hyp) -> None:
+        self.pl, self.mdp, self.r, self.H = planner, mdp, r, H
         self.ok, self.lo, self.hi = ok, lo, hi
         self.base, self.coef, self.legal = base, coef, legal
         w = mdp.w
@@ -625,12 +878,21 @@ class _Points:
         self.has_social = mdp.about[r].log_social is not None
         self.D = mdp.PG + (len(mdp.about[r].log_social) if self.has_social else 0) + 2
         self.proj = None
-        self.prev = planner.keep.get(r)
+        self.prev = planner.keep.get((r, H.key))
         self.stats: list = []
 
     @property
     def n(self) -> int:
         return len(self.beliefs)
+
+    @staticmethod
+    def embed_point(mdp, r: int, b: tuple) -> np.ndarray:
+        """A belief about robot r in the points' coordinates (:func:`beliefkernels.embed`)."""
+        lp, ls, q = b
+        has_social = mdp.about[r].log_social is not None
+        z = np.empty(mdp.PG + (len(mdp.about[r].log_social) if has_social else 0) + 2)
+        embed(lp, ls if ls is not None else np.zeros(1), float(q), has_social, z)
+        return z
 
     def _z(self, b: tuple) -> np.ndarray:
         lp, ls, q = b
@@ -710,7 +972,7 @@ class _Points:
             group = pending[g0:g0 + size]
             warm = [self._warm(self.beliefs[k])[0] for k in group]
             out = self.pl._partner_batch(self.mdp, self.r, [self.beliefs[k] for k in group],
-                                         self.ok, self.lo, self.hi, warm)
+                                         self.ok, self.lo, self.hi, warm, self.H)
             for k, (Q, Vp, st) in zip(group, out):
                 best = np.empty(self.S, dtype=np.int8)
                 alt = np.empty(self.S, dtype=np.int8)
@@ -734,7 +996,7 @@ class _Points:
             V, pol = tail_warm.copy(), pol_warm.copy()
         t0 = time.perf_counter()
         it, res = tail_values(V, pol, self.best[k], self.base, self.nest[k], self.legal, r,
-                              w.N, w.true_tab, w.pev, w.psucc, self.ok, self.pl.gamma, 300)
+                              w.N, self.H.tab, w.pev, w.psucc, self.ok, self.pl.gamma, 300)
         self.pl.clock["tails"] = self.pl.clock.get("tails", 0.0) + time.perf_counter() - t0
         self.tail[k], self.tail_pol[k] = V, pol
         self.solved[k] = True
@@ -757,7 +1019,7 @@ class _Points:
         lamt = np.zeros(shape, dtype=np.float32)
         rest = np.zeros(shape, dtype=np.float32)
         it_k, it_lo, it_hi = self._items(nk)
-        ctx = self.pl._ctx(mdp, r, LL)
+        ctx = self.pl._ctx(mdp, r, LL, self.H)
         projections(P_lp, P_ls, P_q, Z, best, alt, self.legal, *ctx,
                     4, cfg.belief_interpolation == "segment", self.ok, it_k, it_lo, it_hi,
                     k1t, k2t, lamt, rest)
@@ -791,7 +1053,7 @@ class _Points:
         it_k, it_lo, it_hi = self._items(nk)
         for _ in range(H - 1):
             backup(Vn, Vc, best, alt, self.base, nest, k1t, k2t, lamt, frozen, self.legal,
-                   self.r, w.N, w.true_tab, w.pev, w.psucc, w.hold, self.ok, self.pl.gamma,
+                   self.r, w.N, self.H.tab, w.pev, w.psucc, w.hold, self.ok, self.pl.gamma,
                    it_k, it_lo, it_hi)
             Vn, Vc = Vc, Vn
         return Vn
@@ -814,7 +1076,7 @@ class _Points:
         out = np.empty(N_ACTIONS)
         nk = V1.shape[0]
         q_point(int(s), int(a_p), V1, np.ascontiguousarray(np.stack(self.best[:nk])), self.base,
-                self.nest[k], k1, k2, lam, self.legal, self.r, w.N, w.true_tab, w.pev, w.psucc,
+                self.nest[k], k1, k2, lam, self.legal, self.r, w.N, self.H.tab, w.pev, w.psucc,
                 w.hold, self.pl.gamma, out)
         return out
 
@@ -826,16 +1088,16 @@ class _Points:
         k2 = np.zeros(N_ACTIONS, dtype=np.int64)
         lam = np.zeros(N_ACTIONS)
         for a in np.flatnonzero(self.legal[s]).tolist():
-            b2 = self.pl.step_belief(mdp, self.r, LL, b, s, a, a_p)
+            b2 = self.pl.step_belief(mdp, self.r, LL, b, s, a, a_p, self.H)
             k1[a], k2[a], lam[a], _ = self.locate(b2)
         out = np.empty(N_ACTIONS)
         q_point(int(s), int(a_p), V1, np.ascontiguousarray(np.stack(self.best)), self.base,
-                self.nest[k], k1, k2, lam, self.legal, self.r, w.N, w.true_tab, w.pev, w.psucc,
+                self.nest[k], k1, k2, lam, self.legal, self.r, w.N, self.H.tab, w.pev, w.psucc,
                 w.hold, self.pl.gamma, out)
         return out
 
     def after(self, LL, s: int, a: int, a_p: int) -> tuple:
-        return self.pl.step_belief(self.mdp, self.r, LL, self.beliefs[0], s, a, a_p)
+        return self.pl.step_belief(self.mdp, self.r, LL, self.beliefs[0], s, a, a_p, self.H)
 
     def keep(self) -> dict:
         """What the next decision warm-starts from."""

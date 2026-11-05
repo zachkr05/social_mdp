@@ -592,7 +592,20 @@ def main() -> None:
                              "partner's belief about it -- the partner's own update of it after "
                              "every hypothetical transition (\"updated\"), or held as it is now "
                              "(\"frozen\"), the partner predicted by its own model re-solved at "
-                             "the belief (an oracle of its type).  Folders ..._bplan<mode>")
+                             "the belief, under the hypotheses about its goals the coercer's own "
+                             "posteriors hold (--belief-partner).  Folders ..._bplan<mode>")
+    parser.add_argument("--belief-partner", choices=("inferred", "oracle"), default=None,
+                        help="Config.belief_partner: whom the belief planner takes its partner "
+                             "to be -- the hypotheses of its own posteriors about it, weighted "
+                             "(\"inferred\", the default since 2026-11-05 evening; folders "
+                             "_bpinf), or its true goals (\"oracle\", the rule before; folders "
+                             "as before)")
+    parser.add_argument("--belief-partner-mass", type=float, default=None, metavar="E",
+                        help="Config.belief_partner_mass: the posterior mass the hypotheses "
+                             "planned against may leave out (default 0.05; folders _bpm<E>)")
+    parser.add_argument("--belief-partner-max", type=int, default=None, metavar="K",
+                        help="Config.belief_partner_max: the most hypotheses planned against "
+                             "(default 4; 1 = the most likely alone; folders _bpk<K>)")
     parser.add_argument("--belief-horizon", type=int, default=None, metavar="H",
                         help="Config.belief_horizon: transitions planned with the belief's "
                              "dynamics before the belief is held (default 40; folders _bh<H>)")
@@ -780,6 +793,22 @@ def main() -> None:
     if args.belief_planning is not None:
         options = dict(options, belief_planning=args.belief_planning)
         plan_tag += f"_bplan{args.belief_planning}"
+        partner = args.belief_partner or "inferred"
+        options = dict(options, belief_partner=partner)
+        if partner == "inferred":
+            plan_tag += "_bpinf"
+            if args.belief_partner_mass is not None:
+                options = dict(options, belief_partner_mass=args.belief_partner_mass)
+                plan_tag += f"_bpm{args.belief_partner_mass:g}"
+            if args.belief_partner_max is not None:
+                options = dict(options, belief_partner_max=args.belief_partner_max)
+                plan_tag += f"_bpk{args.belief_partner_max}"
+        elif args.belief_partner_mass is not None or args.belief_partner_max is not None:
+            parser.error("--belief-partner-mass / --belief-partner-max go with "
+                         "--belief-partner inferred")
+    elif (args.belief_partner is not None or args.belief_partner_mass is not None
+          or args.belief_partner_max is not None):
+        parser.error("--belief-partner and its settings go with --belief-planning")
     for flag, field, short in (("belief_from", "belief_planning_from", "bfrom"),
                                ("belief_horizon", "belief_horizon", "bh"),
                                ("belief_points", "belief_points", "bp"),

@@ -23,6 +23,7 @@ PAIR = ("hinder", "coercion")      # R0 hinders, R1 coerces; R0 holds R1's objec
 
 def planner(state=hostage, seed=5, **options):
     options.setdefault("belief_planning", "updated")
+    options.setdefault("belief_partner", "oracle")
     cfg = tight_explicit(partner_object="inferred", inertia=1.0, swap_on_place=True, steal=True,
                          **options)
     w, gid, mdp, st, _ = solved(TINY, cfg, (2, 2), PAIR, (1.0, 1.0), state, seed=seed)
@@ -290,7 +291,7 @@ class Rollout(unittest.TestCase):
             cfg = tight_explicit(partner_object="inferred", inertia=1.0, swap_on_place=True,
                                  steal=True, belief_planning=mode, objective="task",
                                  belief_horizon=6, belief_points=6, belief_refinements=1,
-                                 value_maps=False, belief_detail=False)
+                                 value_maps=False, belief_detail=False, belief_partner="oracle")
             res = run_pairing(scene, PAIR, levels=(2, 2), cfg=cfg, n_steps=5)
             bp = res["belief_planner"]
             self.assertEqual(bp["robots"], [1])
