@@ -163,8 +163,9 @@ def hands_step(st, dn, site, how, adj, home, gsite, dsite, iscand, own, gobj, ac
     that is an object's place at that site (H + p), or -1.  give (``Config.hand_over``): an
     object may be handed straight to the partner; False: it changes hands only by being put
     down and picked up.  swap (``Config.swap_on_place``): full hands on an object's place
-    swap what they hold for what lies there.  steal (``Config.steal``): free hands take what
-    the partner next to them holds.  auto (``Config.automatic_hands``): a robot takes its
+    swap what they hold for what lies there.  steal (``Config.steal``, by robot
+    ``Config.steal_robots``): bit i set, robot i's free hands take what the partner next to
+    it holds.  auto (``Config.automatic_hands``): a robot takes its
     own object on arriving where it lies and sets it down on arriving at its destination;
     False: by "pick" and "place" only, like any other object.
 
@@ -285,7 +286,7 @@ def hands_step(st, dn, site, how, adj, home, gsite, dsite, iscand, own, gobj, ac
                 elif not auto and dn[i] == 0 and gsite[i] == -2 and iscand[s]:
                     intent[i] = 8
         elif h == 5:                         # take what the partner next to it holds
-            if (k < 0 and steal and adj and held[j] >= 0
+            if (k < 0 and ((steal >> i) & 1) != 0 and adj and held[j] >= 0
                     and ((rights[i] >> held[j]) & 1)):
                 intent[i] = 7
                 grab[i] = held[j]

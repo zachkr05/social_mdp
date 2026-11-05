@@ -568,6 +568,63 @@ def main() -> None:
     parser.add_argument("--feint-margin", type=float, default=None, metavar="M",
                         help="Config.feint_margin: by how much (reward units) the decoy option "
                              "must beat the plan (default 0; folders ..._feint<M> where set)")
+    parser.add_argument("--steal-robots", type=int, nargs=2, metavar=("R0", "R1"), default=None,
+                        help="Config.steal_robots, with --steal: which robots may take (1 / 0 "
+                             "each, agent_1's then agent_2's; default both; folders _stealR0 / "
+                             "_stealR1 where only one)")
+    parser.add_argument("--social-hypotheses", nargs="+", metavar="GOAL", default=None,
+                        help="Config.social_hypotheses: the social goals a robot holds possible "
+                             "for its partner (default the paper's five, none and hinder).  Fewer "
+                             "change the robot that reads its partner (folders _hyp<initials>)")
+    parser.add_argument("--objective", choices=("table", "task", "complete"), default="table",
+                        help="Config.objective (since 2026-11-05): what a coercer's own reward "
+                             "pays for -- \"table\" (Table I: its partner's estimate of its "
+                             "goal reward nested in R_j), \"task\" (its true goal reward there: "
+                             "(1 + w + w^2) r(g) - c against a goal-less hinderer), \"complete\" "
+                             "(a bonus for the goal actually done, minus costs; with "
+                             "--belief-planning only).  Folders ..._obj<task|complete>")
+    parser.add_argument("--completion-bonus", type=float, default=None, metavar="B",
+                        help="Config.completion_bonus: the bonus of --objective complete "
+                             "(default: the value of a finished goal, ObjectWorld.vdone)")
+    parser.add_argument("--belief-planning", choices=("frozen", "updated"), default=None,
+                        help="Config.belief_planning (since 2026-11-05, "
+                             "social_pairings/beliefplan.py): a level-2 coercer plans over its "
+                             "partner's belief about it -- the partner's own update of it after "
+                             "every hypothetical transition (\"updated\"), or held as it is now "
+                             "(\"frozen\"), the partner predicted by its own model re-solved at "
+                             "the belief (an oracle of its type).  Folders ..._bplan<mode>")
+    parser.add_argument("--belief-horizon", type=int, default=None, metavar="H",
+                        help="Config.belief_horizon: transitions planned with the belief's "
+                             "dynamics before the belief is held (default 40; folders _bh<H>)")
+    parser.add_argument("--belief-points", type=int, default=None, metavar="N",
+                        help="Config.belief_points: the most belief points (default 40; folders "
+                             "_bp<N>)")
+    parser.add_argument("--belief-spacing", type=float, default=None, metavar="D",
+                        help="Config.belief_spacing: a new point where a belief lies farther "
+                             "than D from all of them (sqrt-coordinates; default 0.1; folders "
+                             "_bs<D>)")
+    parser.add_argument("--belief-refinements", type=int, default=None, metavar="R",
+                        help="Config.belief_refinements: rounds of points added along the "
+                             "planned way (default 2; folders _br<R>)")
+    parser.add_argument("--belief-interpolation", choices=("segment", "nearest"), default=None,
+                        help="Config.belief_interpolation (default segment; folders _bnearest)")
+    parser.add_argument("--forced-prefix", nargs=2, metavar=("RECORD", "N"), default=None,
+                        help="Config.forced_actions: the first N transitions' joint actions of "
+                             "RECORD (a record of this pairing on this scene), forced -- the "
+                             "robots watch them with this run's options -- and, with "
+                             "--belief-planning, the belief planner from transition N (folders "
+                             "_forced<N>)")
+    parser.add_argument("--forced-actions", nargs="+", metavar="A0,A1", default=None,
+                        help="Config.forced_actions written out: one agent_1,agent_2 pair of "
+                             "action names (+y +x -y -x stay pick place take give swap) or "
+                             "numbers per transition, e.g. +y,stay pick,stay pick,stay -- a "
+                             "history to start from (folders _forced<N>)")
+    parser.add_argument("--belief-from", type=int, default=None, metavar="T",
+                        help="Config.belief_planning_from: the planner of Eq. 4 before "
+                             "transition T, the belief planner from it (folders _bfrom<T>)")
+    parser.add_argument("--belief-tail", choices=("frozen", "cap"), default=None,
+                        help="Config.belief_tail: after the horizon the belief held (default), or "
+                             "nothing after the step cap where that comes first (folders _bcap)")
     parser.add_argument("--no-belief-detail", action="store_true",
                         help="Config.belief_detail=False: leave the belief update's workings out "
                              "of the record (by default every step's \"belief_update\" holds them "
@@ -678,6 +735,68 @@ def main() -> None:
             options = dict(options, feint_margin=float(args.feint_margin))
     feint_tag = ("" if not args.decoy_feint else
                  "_feint" + ("" if args.feint_margin is None else f"{args.feint_margin:g}"))
+    # what a coercer's reward pays for, and planning over its partner's belief (2026-11-05):
+    # the defaults are the folders of before; anything else names its folder
+    plan_tag = ""
+    if args.steal_robots is not None and tuple(args.steal_robots) != (1, 1):
+        if not args.steal:
+            parser.error("--steal-robots goes with --steal")
+        options = dict(options, steal_robots=tuple(bool(x) for x in args.steal_robots))
+        plan_tag += "_steal" + "".join(f"R{i}" for i in (0, 1) if args.steal_robots[i])
+    if args.social_hypotheses is not None:
+        hyps = tuple(dict.fromkeys(args.social_hypotheses))
+        for g in hyps:
+            G.parse_goal(g)
+        if hyps != tuple(Config().social_hypotheses):
+            options = dict(options, social_hypotheses=hyps)
+            plan_tag += "_hyp" + "".join(g[:2] for g in hyps)
+    if args.objective != "table":
+        options = dict(options, objective=args.objective)
+        plan_tag += f"_obj{args.objective}"
+    if args.completion_bonus is not None:
+        if args.objective != "complete":
+            parser.error("--completion-bonus goes with --objective complete")
+        options = dict(options, completion_bonus=float(args.completion_bonus))
+        plan_tag += f"_bonus{args.completion_bonus:g}"
+    if args.forced_prefix is not None:
+        record, n = args.forced_prefix[0], int(args.forced_prefix[1])
+        trace = load_result(Path(record))["trace"]
+        if n < 1 or n > len(trace):
+            parser.error(f"--forced-prefix: {record} has {len(trace)} transitions")
+        options = dict(options, forced_actions=tuple(tuple(int(a) for a in row["action"])
+                                                     for row in trace[:n]))
+        plan_tag += f"_forced{n}"
+    if args.forced_actions is not None:
+        if args.forced_prefix is not None:
+            parser.error("--forced-actions or --forced-prefix, not both")
+        def code(name: str) -> int:
+            return int(name) if name.isdigit() else list(ACTION_NAMES).index(name)
+        try:
+            pairs = tuple(tuple(code(x) for x in tok.split(",")) for tok in args.forced_actions)
+        except ValueError:
+            parser.error(f"--forced-actions: action names are {ACTION_NAMES}")
+        options = dict(options, forced_actions=pairs)
+        plan_tag += f"_forced{len(pairs)}"
+    if args.belief_planning is not None:
+        options = dict(options, belief_planning=args.belief_planning)
+        plan_tag += f"_bplan{args.belief_planning}"
+    for flag, field, short in (("belief_from", "belief_planning_from", "bfrom"),
+                               ("belief_horizon", "belief_horizon", "bh"),
+                               ("belief_points", "belief_points", "bp"),
+                               ("belief_spacing", "belief_spacing", "bs"),
+                               ("belief_refinements", "belief_refinements", "br")):
+        value = getattr(args, flag)
+        if value is not None:
+            if args.belief_planning is None:
+                parser.error(f"--{flag.replace('_', '-')} goes with --belief-planning")
+            options = dict(options, **{field: value})
+            plan_tag += f"_{short}{value:g}"
+    if args.belief_interpolation is not None and args.belief_interpolation != "segment":
+        options = dict(options, belief_interpolation=args.belief_interpolation)
+        plan_tag += "_bnearest"
+    if args.belief_tail is not None and args.belief_tail != "frozen":
+        options = dict(options, belief_tail=args.belief_tail)
+        plan_tag += "_bcap"
     # lazy hypotheses (2026-11-04): an approximation of the solve, so it names its folder
     if args.lazy > 0.0:
         options = dict(options, lazy_mass=args.lazy, lazy_period=args.lazy_period)
@@ -724,6 +843,7 @@ def main() -> None:
            + ("" if lpow == 1.0 else f"_lpow{lpow:g}")
            + ("" if window <= 0 else f"_window{window}")
            + feint_tag           # a decoy feint (2026-11-04)
+           + plan_tag            # the objective; planning over the partner's belief (2026-11-05)
            + "".join(f"_{flag}{value:g}" for _, flag, value in hazards)
            + ("" if args.lazy <= 0.0 else f"_lazy{args.lazy:g}"))
     #        (... with the physical posterior on the level-0 policies, the authors' code; the

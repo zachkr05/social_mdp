@@ -14,6 +14,7 @@ import numpy as np
 
 from . import goals as G
 from .config import Config, SolverFailure
+from .beliefplan import BeliefPlanner
 from .feint import DecoyFeint
 from .constants import (ACTION_NAMES, CARRYING, DONE, GONE, HELD0, HELD1, HOME, MOVE_OF, MOVES,
                         N_ACTIONS, NO_WAY, PICK, STAGE_NAMES, STALL_WARNING, TO_OBJECT,
@@ -105,6 +106,8 @@ class _Run:
         self.undo: tuple = (None, None)
         # the decoy option of a robot that feints (Config.decoy_feint; feint.py)
         self.feint: Optional[DecoyFeint] = None
+        # planning over the partner's belief (Config.belief_planning; beliefplan.py)
+        self.planner: Optional[BeliefPlanner] = None
         self.state = w.initial                               # (x0, x1, block)
         self.status = [int(v) for v in w.status[w.block0]]   # real object statuses
         self.done = [int(v) for v in w.done[w.block0]]
@@ -348,6 +351,7 @@ def _transition(mdp: SocialMDP, run: _Run, t: int, n_steps: int, uniforms: np.nd
     # every other action by more than the margin; held_back: where that changed the choice
     margin = cfg.inertia_margin
     undo = run.undo if margin > 0.0 else (None, None)
+    plan_q = (None, None)                # the belief planner's Q (Config.belief_planning)
     if cfg.action_selection == "sample":
         q_draw = [q[i].copy() for i in (0, 1)]
         for i in (0, 1):
@@ -359,7 +363,15 @@ def _transition(mdp: SocialMDP, run: _Run, t: int, n_steps: int, uniforms: np.nd
                           and act[i] != undo[i] for i in (0, 1))
     else:
         chosen = [choose_with_inertia(q[i], undo[i], margin) for i in (0, 1)]
+        if run.planner is not None:          # planning over the partner's belief: its Q, with
+            got = run.planner.decide(mdp, t, state, run.undo)       # the same inertia
+            plan_q = tuple(got.get(i) for i in (0, 1))
+            for i, qb in got.items():
+                chosen[i] = choose_with_inertia(qb, undo[i], margin)
         act = tuple(int(a) for a, _ in chosen)
+        if t < len(cfg.forced_actions):      # a history to start from (Config.forced_actions)
+            act = tuple(int(a) for a in cfg.forced_actions[t])
+            chosen = [(a, False) for a in act]
         if run.feint is not None:            # a decoy feint, where it beats the plan (feint.py)
             act = run.feint.decide(mdp, t, state, run.status, run.where, act, q)
         held_back = tuple(bool(kept) for _, kept in chosen)
@@ -422,6 +434,8 @@ def _transition(mdp: SocialMDP, run: _Run, t: int, n_steps: int, uniforms: np.nd
         move=tuple(tuple(int(v) for v in MOVES[MOVE_OF[a]]) for a in act),
         q=tuple(x.copy() for x in q),
         q_physical=tuple(x.copy() for x in q_phys),
+        **({} if run.planner is None else dict(belief_plan=tuple(
+            None if x is None else x.copy() for x in plan_q))),
         social_reward=tuple(social_reward),
         psi=tuple(x.copy() for x in psi),
         policy=tuple(x.copy() for x in policy),
@@ -632,6 +646,8 @@ def rollout(world: ObjectWorld, goal_ids: Sequence[int], solo_steps: Sequence[in
         for line in _describe(mdp, run, n_steps):
             print(f"[pairings] {line}", flush=True)
     mdp.allocate()
+    if cfg.belief_planning != "off":     # (its tables read the allocated banks)
+        run.planner = BeliefPlanner(mdp, n_steps)
     info0 = mdp.solve_level0()
     if cfg.verbose:
         print(f"[pairings] level 0: {info0['models']} models, certificate max|TV-V| "
@@ -673,6 +689,8 @@ def rollout(world: ObjectWorld, goal_ids: Sequence[int], solo_steps: Sequence[in
         if cfg.partner_observed != "action":     # what each robot was seen to have done
             run.trace[-1]["seen_as"] = tuple(list(mdp.observed_actions(act, s, nxt, i))
                                              for i in (0, 1))
+        if run.planner is not None:
+            run.planner.observe(t, act)
         mdp.observe(act, s, nxt, event)
         if mdp.last_update is not None:          # Config.belief_detail: the update's workings,
             run.trace[-1]["belief_update"] = tuple(mdp.last_update[1 - i]   # robot i's about
@@ -721,6 +739,7 @@ def _result(mdp: SocialMDP, run: _Run, info0: dict, cfg: Config) -> dict:
         ledger=run.ledger, trace=run.trace, events=run.events, deadlock=run.deadlock,
         max_stall=run.max_stall,
         **({} if run.feint is None else dict(feint=run.feint.record())),
+        **({} if run.planner is None else dict(belief_planner=run.planner.record())),
         stage=tuple(STAGE_NAMES[_stage(w, state, i)] for i in (0, 1)),
         status=run.all_status(run.status), holds=holds_of(run.status),
         object_cells=run.all_cells(w.object_cells(run.status, state, run.where)),

@@ -900,18 +900,38 @@ class SocialMDP:
                 continue
             inputs_typed(*self._input_args(d, slot, rows, keys))
 
-    def planning_weights(self, slot: BeliefSlot) -> np.ndarray:
+    def planning_weights(self, slot: BeliefSlot, about: Optional[list] = None) -> np.ndarray:
         """(Mc,) the weights a slot's partner hypotheses are planned with (Eq. 4): at depth
         1 the physical posterior about the partner; at depth 2 the product of the partner's
-        physical and social posteriors, hypothesis (k, t) by (k, t)."""
-        b = self.about[1 - slot.agent]
+        physical and social posteriors, hypothesis (k, t) by (k, t).  ``about``: the beliefs
+        to read in place of ``self.about`` (the belief planner's hypothetical beliefs)."""
+        b = (self.about if about is None else about)[1 - slot.agent]
         phys = b.phys()
         if slot.depth == 1:
             return phys
         return np.outer(phys, b.social()).reshape(-1)
 
+    def task_objective(self, i: int) -> bool:
+        """``Config.objective="task"`` for robot i (its social goal one of
+        ``objective_goals``): inside Table I's R_j its partner's estimate of its goal reward
+        is its true goal reward -- the nested belief a point mass on its own goal."""
+        cfg = self.cfg
+        return (cfg.objective == "task"
+                and int(self.goals[i]) in {G.parse_goal(g) for g in cfg.objective_goals})
+
+    def nested_phys(self, o: int, about: Optional[list] = None) -> np.ndarray:
+        """(PG,) the belief about robot o's physical goal that its partner's models hold
+        inside robot o's level-2 reward (Table I's R_j estimates r(g_o) by it): the
+        posterior ``about[o]`` -- or, ``Config.objective="task"``, robot o's true goal."""
+        if self.task_objective(o):
+            out = np.zeros(self.PG)
+            out[self.own_goal[o]] = 1.0
+            return out
+        return (self.about if about is None else about)[o].phys()
+
     def _input_args(self, d: int, slot: BeliefSlot, rows: np.ndarray, keys: list,
-                    terms: Optional[dict] = None, out: Optional[tuple] = None) -> tuple:
+                    terms: Optional[dict] = None, out: Optional[tuple] = None,
+                    about: Optional[list] = None) -> tuple:
         """The arguments of :func:`kernels.inputs_typed` for the models ``rows`` of a slot.
         terms: the social coefficients to use instead of the models' own -- at depth 1
         {"partner_goal": (M,), "own_term": (M,), "race": (M,)} (goals.level1_term's a, b,
@@ -919,14 +939,17 @@ class SocialMDP:
         "partner_goal": (M, n_types), "race": (M, n_types)} (goals.level2_term's alpha,
         beta, nu, race) -- a key left out is zero: the rewards then hold the physical part
         and the terms named (:meth:`value_components`).  out: (P, p_row, R, pd, ho) to
-        write into instead of the bank's (R indexed by the position in ``rows``)."""
+        write into instead of the bank's (R indexed by the position in ``rows``).  about:
+        the beliefs to read in place of ``self.about`` (beliefplan.py: a model re-solved at
+        a belief the partner may come to hold)."""
         w, cfg, L0, L1, K = self.w, self.cfg, self.L0, self.L1, self.PG
+        about = self.about if about is None else about
         bank = self.bank(d)
         z3, z2, z1 = np.zeros((1, 1, 2)), np.zeros((1, 1)), np.zeros(1)
         o, g = slot.agent, slot.group
         p = 1 - o
-        b = self.planning_weights(slot)
-        q = float(self.about[p].idle)
+        b = self.planning_weights(slot, about)
+        q = float(about[p].idle)
         # the partner's legal moves (where it idles) and the robot's own
         valid = (np.ascontiguousarray(w.valid_by[p]), np.ascontiguousarray(w.valid_by[o]))
         _, lo, hi = block_items(w.NN, self.reach_of(o, g, int(bank.block[rows[0]])), 0)
@@ -983,9 +1006,10 @@ class SocialMDP:
         ta1, tb1, tr1 = (np.array([self.level1_term(p, t)[n] for t in hyp])
                          for n in range(3))
         # the partner's (every level-1 model's) belief about robot o: about[o], the same
-        # posterior whatever the model's own goal; its idle mode likewise
-        nested_belief = np.tile(self.about[o].phys(), (K, 1))                  # (PG, PG)
-        nested_idle = np.full((K, K), float(self.about[o].idle))
+        # posterior whatever the model's own goal; its idle mode likewise.  Under
+        # Config.objective="task" robot o's reward reads its true goal there (nested_phys)
+        nested_belief = np.tile(self.nested_phys(o, about), (K, 1))           # (PG, PG)
+        nested_idle = np.full((K, K), float(about[o].idle))
         return (*common, L1.psi, child_rows, np.ascontiguousarray(slot.hyp_goal),
                 np.ascontiguousarray(slot.hyp_type), K, n_types, b * (1.0 - q), b * q,
                 float(cfg.idle_eps), *valid, w.busy, w.gone, *models, np.zeros(M), np.zeros(M),
@@ -2026,10 +2050,11 @@ class SocialMDP:
             else:                                # ... or behind where its partner is done
                 race = -float((wts * rj)[fin_j].sum())
             return physical + a_ * expected + b_ * own + c_ * race
-        # robot i's goal reward as its partner estimates it, under the partner's belief
+        # robot i's goal reward as its partner estimates it, under the partner's belief (its
+        # true goal under Config.objective="task": nested_phys)
         ri_all = w.goal_rates(nxt, i, self.pg_obj[i], self.pg_dst[i], estimate=True)
         fin_est = w.goals_finished(nxt, i, self.pg_obj[i], self.pg_dst[i], estimate=True)
-        mine = self.about[i].phys()
+        mine = self.nested_phys(i)
         cost_p = float(w.cost_c[st[2], p, a_p])
         xi = 0.0
         for h in np.flatnonzero(wts > 0.0).tolist():

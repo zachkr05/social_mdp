@@ -2382,6 +2382,151 @@ while the coercer, on its object's place with the decoy, waited (stay 333.2, swa
 the hinderer: take -70.0 against its best -63.8, as blocking already stopped the coercer).
 Hence the lure, the head start, the waiting and the clocks per phase.
 
+## Planning over the partner's belief (option, since 2026-11-05)
+
+The user, of an answer to "why does the coercer never feint" -- "The planner needs two
+changes: reward the coercer for its real task, and simulate how each candidate action changes
+the other agent's beliefs and subsequent actions" -- "Could you please implement this?", then
+"keep looping iterating and producing videos until it gives the exact behavior we want in the
+scene hinder vs coercer in the two rooms scene with tau = 0.2".
+
+**What the coercer is paid** (`Config.objective`, `--objective`, folders `..._obj<...>`).
+Against a goal-less hinderer Table I's coercion cell is $w(-\tilde R_j + r(g_i))$ with the
+hinderer's $\tilde R_j = -w_j\,\bar r_i$, $\bar r_i = \sum_g c(g)\,r_i(s'; g)$ the coercer's
+goal reward *as the hinderer estimates it* under its belief $c$ about the coercer:
+
+$$R_i = (1 + w_i)\,r_i^\star + w_i w_j\,\bar r_i - c(a_i) \qquad (\texttt{"table"}),$$
+
+paid for looking as if it got on with some goal. `"task"`: the estimate inside $\tilde R_j$ is
+the coercer's true goal reward, $\bar r_i \to r_i^\star$,
+
+$$R_i = (1 + w_i + w_i w_j)\,r_i^\star - c(a_i) \qquad (3 r^\star - c \text{ at unit weights}),$$
+
+the same as `"table"` wherever the hinderer is sure of the coercer's goal
+(`SocialMDP.nested_phys`: the nested belief a point mass on the robot's own goal, in the
+solver's rewards and in `modeled_reward` alike). Only the coercer's own reward changes: the
+hinderer still acts on what it believes. `"complete"` (with the planner below only): a
+one-time bonus for the goal actually done, $B\,1[\neg\text{done}_i(s) \wedge
+\text{done}_i(s')] - c(a_i)$, $B$ = `completion_bonus` (default the value of a finished goal
+under the shaped reward). For the robots whose social goal is one of `objective_goals`
+(coercion).
+
+**The planner** (`Config.belief_planning`, `--belief-planning`, folders `..._bplan<mode>`;
+`social_pairings/beliefplan.py`, kernels in `beliefkernels.py`). A level-2 robot whose social
+goal is one of `belief_planning_goals` (coercion) chooses by
+
+$$Q(s, m, a_i) = R(s, a_i, a_j) + \gamma\, V\big(s', F(m; s, a_i, a_j, s')\big),
+\qquad V = \max_a Q,$$
+
+$m$ the partner's belief about the robot -- its physical posterior (object x destination),
+its social posterior and its idle mode, all it holds -- and $F$ the partner's **own** update
+of it after the joint transition (Eqs. 5-6: the stages, the two posteriors, the idle mode, the
+transition term of the hands, the hazards, the lapse, the power, the likelihood's tau --
+`beliefkernels.belief_update`, the rule of `SocialMDP.updated_belief` over every state,
+checked against it to $10^{-12}$ in `tests/test_belief_plan.py`). The timing is the robots':
+the partner chooses $a_j$ with $m$, before it sees $a_i$; it updates to $F(m; \ldots)$ after;
+its next choice uses that.
+
+* *The partner, predicted*: by its own model, its root re-solved at belief $m$ (one model on
+  scratch arrays), greedy with `util.argmax_action`'s tie-break and its inertia -- the rule
+  it acts by. Its inertia needs one bit of its history: whether its best action would undo
+  its last one (then it plays the next best unless undoing wins by more than the margin).
+  So the robot knows its partner's social goal, weight and level: **an oracle**, said so in
+  the record. Its belief it does not need to be told: both see the same history, and the
+  partner's prior and rule are the model's (`SocialMDP.about[i]` is exactly what the
+  partner holds). The dynamics are the true ones.
+* *The beliefs*: at most `belief_points` (40) belief points -- the partner's belief now
+  (point 0, exact), those it would form if the robot acted by each hypothesis it holds about
+  it (the robot's level-1 models, most likely action: probes), and those along the planned
+  way (`belief_refinements` rounds, 2) -- a new point wherever a belief lies farther than
+  `belief_spacing` (0.1) from all others, in sqrt-coordinates (Hellinger). Every point is a
+  whole belief, not a bin of a statistic; the belief after a transition is computed exactly
+  from its point and then located between two points with convex weights
+  (`belief_interpolation="segment"`, an averager: the backup stays a contraction; or at the
+  nearest). How far each planned belief lies from the points is in the record.
+* *The horizon*: `belief_horizon` (40) transitions by backward induction over (point,
+  inertia bit, state), then the value with the partner's belief held where it is -- the
+  robot's best answer to the partner's greedy choice at that point (exact policy iteration:
+  the partner deterministic, every policy's successor graph a function) -- or, with
+  `belief_tail="cap"`, nothing after the rollout's step cap where that comes first.
+* *No reward for deceiving*: the advisor's $\kappa = 0$. A decoy is worth what it brings the
+  real task.
+* `"frozen"`: the same planner with the partner's belief held as it is now in every
+  hypothetical transition -- the comparison that isolates the belief's dynamics. Every
+  decision of `"updated"` also records that Q.
+
+**The record** (`result["belief_planner"]`, one entry per decision; `tools/belief_plan.py
+RECORD.json` prints them): the Q of every action, with the belief updated and with it held
+for this one transition, and their difference -- the advisor's
+$\Delta_\text{belief} = \gamma\,[V(s', m') - V(s', m)]$ -- the frozen plan's Q, the action
+chosen, the runner-up and the gap, the partner's predicted action and the one it took, the
+partner's belief now and after each action (object, destination, social goal, idle), the
+planned way (both robots' actions and the partner's belief in each object, step by step), the
+points and their distance from the planned beliefs, timings. The trace's `belief_plan` holds
+the Q the robot chose by (its `q` stays the Eq. 4 planner's).
+
+**The comparison** (`run_belief_2x2.sh`): hinder / coercion on the two-room scene at the
+49's settings, the coercer under each of {Eq. 4's planner, the frozen planner, the updated
+planner} x {"table", "task"}; the scene, beliefs, likelihood, hazards, choice rules, costs and
+stopping rules the same throughout.
+
+**Three options for the experiments** (2026-11-05). `belief_planning_from` (`--belief-from
+T`): the planner of Eq. 4 before transition T, the belief planner from it. `forced_actions`
+(`--forced-prefix RECORD N`): the first N transitions' joint actions replayed from a record --
+"the first 20 transitions as before" -- the robots watching them with this run's options (a
+goal hazard, say), the belief planner from transition N. `steal_robots` (`--steal-robots 1 0`):
+which robots may take, with `steal` -- (True, False): the hinderer may take what the coercer
+holds, the coercer may not take back.
+
+**What it found** (hinder / coercion on the two-room scene, $\tau = 0.2$, the 49's hands --
+swaps, pick-up of three, inertia 1, carry 1 -- the task objective; the coercer's partner
+predicted right at every decision of every run):
+
+| the world | the coercer | what happened |
+|---|---|---|
+| both robots take | Eq. 4 | the hinderer lifts the coercer's object at 8 and keeps it to the cap; the coercer's takes miss |
+| both robots take | belief planner | done at 20: it walks straight in, takes the object at 11 the moment the hinderer's lift ends, puts it back on its place when the hinderer reaches for it (its own act comes first), lifts it again (nothing lifted can be taken) and sets it down at its destination as the hinderer reaches again. The frozen plan's Q picks the same action at 18 of 20 decisions: what wins is knowing the hinderer's policy, not moving its belief |
+| both robots take, from the Eq. 4 history at 20 | belief planner | done at 26: it corners the hinderer at (1, 1) and takes the object at 22 |
+| nobody takes | Eq. 4 | deadlock at 33, the hinderer holding the object |
+| nobody takes | belief planner | done at 24, by **deception by motion**: it steps onto the decoy's cell (the hinderer's belief that it wants the decoy 0.94), paces at the doorway (0.40, then 0.98 at 10), the hinderer leaves the coercer's object to cover the doorway, and the coercer slips past, lifts the object (19-21) and delivers |
+| only the hinderer takes | belief planner | done at 15: the motion route again (it never needs to lift the decoy) |
+| only the hinderer takes; the 20 transitions of the Eq. 4 run without takes replayed (the hinderer holding the coercer's object since 8); goal hazard 0.02 | belief planner from 21 | done at 43, a **lure by motion**: it walks out toward its own room and the decoy (the hinderer's belief in the decoy 0.11 -> 0.99 at 26), the hinderer puts the object back on its place at 29 to free its hands, the coercer comes back, steps onto the object's place as the hinderer steps off it, lifts it (38-40: nothing lifted can be taken) and delivers. Its plan at 24 predicted all of it, the put-back at the sixth step |
+| the same, the likelihood at its own temperature 0.5 (`inference_temperature`) | belief planner from 21 | done at 47: the same lure |
+| only the hinderer takes; the hinderer has lifted the coercer's object while the coercer waited at its start beside the decoy (5 transitions forced: `--forced-actions +y,stay pick,stay pick,stay pick,stay stay,stay`) | belief planner from 6 | done at 23, **the decoy**: it steps onto the hinderer's object (belief in it 0.13 -> 0.94; Delta_belief of that step +1.45) and lifts it (7-9); at 7, the hinderer, sure now that it wants the decoy (1.00), puts the coercer's object back and comes for the decoy; the coercer carries the decoy round it (the hinderer's takes at 14 and 17 miss: predicted, dodged) to its object's place -- the hinderer's belief frozen at the decoy all the way, the coercer's hands being full -- swaps the decoy for its object there (20) and sets it down at its destination (23). At 7 lifting won by 0.03 over staying, and the frozen plan's Q preferred stepping away (+y) |
+
+The last scene under the advisor's comparison (`run_belief_2x2.sh` takes the same flags):
+
+| the coercer | reward | the hinderer's belief in its plan | outcome |
+|---|---|---|---|
+| Eq. 4 | Table I | held | deadlock at 29: the hinderer keeps the object |
+| Eq. 4 | task | held | deadlock at 29 |
+| belief planner | Table I | held (`"frozen"`) | deadlock at 43, as under the task reward |
+| belief planner | task | held (`"frozen"`) | it also steps onto the decoy at 6 and the hinderer puts the object back at 7, but it walks on past the decoy; the hinderer lifts the object again at 18; deadlock at 43 |
+| belief planner | Table I | updated | done at 23 by the decoy, step for step as under the task reward |
+| belief planner | task | updated | done at 23 by the decoy |
+
+`run_belief_scenes.sh` runs the same six on four bigger scenes, both robots taking (the user,
+2026-11-05: "Can you launch them on all 4 scenes just hinder vs coercion"): `gate_few` (the
+testbed's gate scene needs 60-70 GiB a rollout; this is its map with four cells to put an
+object down on) and the house scenes `near_miss`, `hall_crossing`, `head_on_corridor` -- one
+rollout at a time, some 14 GiB and 3-3.5 minutes a transition on a house scene with the belief
+planner at 12 points (the likelihood table in single precision there).
+
+What finds the decoy is planning over the hinderer's belief updates, under either reward;
+neither reward finds it with the belief held. (The task reward matters where appearing to
+succeed would pay -- the advisor's worry -- and in these runs it never did: the planner went on
+to recover its object either way.) The decision is close: at 7 lifting beat staying on the
+decoy's cell by 0.03, and the beliefs the plan passes through lie up to about 1 (sqrt-
+coordinates) from the nearest point -- the prediction of the hinderer was right at every
+decision all the same.
+
+What is left out: the robot's own belief about its partner moves on in reality, held in the
+plan (the partner's model of the robot -- the likelihoods of $F$ -- is as solved this
+transition); inertia after the horizon; the stopping rules other than the cap; under
+`"updated"`, `physical_likelihood="cut"` and `belief_window` (not yet carried in the
+planner's state) and a level-1 partner. The decoy feint of 2026-11-04 (`decoy_feint`) is the
+other answer to the same question, and the two exclude each other.
+
 ## The belief update's workings in the record (since 2026-11-04)
 
 The user: "just have it put all diagnostics into the json file. All information for belief
@@ -4310,6 +4455,9 @@ every mix of levels ("Results").
 | `likelihood_power` | `1` | a tempered update: each posterior about the partner multiplied by its likelihood ^ $\alpha$ (the learning factor's, after the idle mode's mix; Eq. 5's), every observation counting $\alpha$ of itself ("A softer likelihood"; since 2026-11-04). 1: Bayes' rule. Folders `..._lpow<ALPHA>` |
 | `option_temperature`, `option_detour`, `option_start`, `option_switch`, `option_keepaway_end` | `0.5`, `log 2`, `0.05`, `0.02`, `0.2` | the partner's subgoals under `physical_likelihood="cut"`: their policies' temperature (x c(move)), a new subgoal's prior falling by $e^{-\lambda}$ per extra move, the probabilities per transition that a subgoal starts, is interrupted, that keeping away ends ("The partner's subgoals"; since 2026-11-04). Folders `..._optT`, `_optD`, `_optS`, `_optI` where set |
 | `belief_window` | `0` | a window on the evidence: each of the two physical posteriors from the uniform prior and the likelihoods of the last $n$ transitions of its own stage only -- the object's with the partner's hands empty, the destination's holding an object; what the hands' outcomes ruled out stays out; the goal hazard a floor ("A window on the evidence"; since 2026-11-04). 0: the whole past, Bayes' rule. Needs `belief_factored`, no `hand_hazard`. Folders `..._window<N>` |
+| `objective`, `objective_goals`, `completion_bonus` | `"table"`, coercion, `None` | what a coercer's own reward pays for: Table I's, the hinderer's estimate of its goal reward nested in $\tilde R_j$ (`"table"`); its true goal reward there, $(1 + w_i + w_i w_j)\,r^\star - c$ against a goal-less hinderer (`"task"`); a bonus for the goal actually done (`"complete"`, with the belief planner) ("Planning over the partner's belief"; since 2026-11-05). Folders `..._obj<...>` |
+| `belief_planning`, `belief_planning_goals` | `"off"`, coercion | `"updated"`: a level-2 coercer plans over its partner's belief about it, the partner's own update after every hypothetical transition and the partner predicted by its own model at that belief (an oracle of its type); `"frozen"`: the same with the belief held ("Planning over the partner's belief"; since 2026-11-05). Folders `..._bplan<mode>` |
+| `belief_horizon`, `belief_points`, `belief_spacing`, `belief_refinements`, `belief_interpolation`, `belief_tail` | `40`, `40`, `0.1`, `2`, `"segment"`, `"frozen"` | the belief planner's: transitions with the belief's dynamics, the most belief points, the distance (sqrt-coordinates) beyond which a belief becomes a point, rounds of points along the planned way, between two points or at the nearest, the belief held after the horizon or nothing after the step cap. Folders `_bh`, `_bp`, `_bs`, `_br`, `_bnearest`, `_bcap` where set |
 | `decoy_feint`, `feint_goals`, `feint_margin`, `feint_min_shift`, `feint_cooldown`, `feint_lure`, `feint_lag`, `feint_wait` | `False`, `("coercion",)`, `0.0`, `0.01`, `10`, `True`, `1.0`, `3` | a decoy feint: a level-2 robot of one of `feint_goals` whose partner holds its object looks ahead at lifting another object with the partner's own belief update fed each step, values the end with every model re-solved at the belief the partner would then hold, and takes the option where it beats its plan by more than `feint_margin` ("A decoy feint"; since 2026-11-04). Needs the partner's object inferred and picking by hand; twice the memory. Folders `..._feint` |
 | `belief_detail` | `True` | every step's belief update in the record, trace `belief_update`: every hypothesis model's Q and what it made of the action, Eqs. 5-6's likelihoods per hypothesis, destination and object, the beliefs before and after ("The belief update's workings in the record"; since 2026-11-04; `tools/belief_step.py` prints a step). Not part of the model: `--resume` keeps a record made without it. `False` (`--no-belief-detail`, `NODETAIL=1`): the record of before |
 | `partner_delivers`, `partner_parks`, `partner_observed`, `social_belief`, `child_conditioning` | `False`, `False`, `"action"`, `"marginals"`, `False` | the devices of before 2026-10-30, gone: the carry and park tables, the "outcome" observation, the joint posterior, the conditioning of the partner's estimate on the robot's action inside $\tilde R_j$. Kept only so that the records of before can be read; `Config` raises on any other value (`BELIEF_DEVICES`). (The lapse and the belief temperature of then are options again: above) |

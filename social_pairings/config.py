@@ -102,6 +102,20 @@ ADDED_FIELDS = dict(
     feint_lure=True,               # 2026-11-04 (late evening; the option ended at the decoy)
     feint_lag=1.0,
     feint_wait=3,
+    objective="table",             # 2026-11-05 (Table I's reward, the partner's estimate nested)
+    objective_goals=("coercion",),
+    completion_bonus=None,
+    belief_planning="off",         # 2026-11-05 (the partner's belief held fixed in every plan)
+    belief_planning_goals=("coercion",),
+    belief_horizon=40,
+    belief_points=40,
+    belief_spacing=0.1,
+    belief_refinements=2,
+    belief_interpolation="segment",
+    belief_tail="frozen",
+    belief_planning_from=0,
+    steal_robots=(True, True),     # 2026-11-05 (both robots took, with steal)
+    forced_actions=(),             # 2026-11-05 (nothing forced)
 )
 
 
@@ -288,6 +302,11 @@ class Config:
     # user: "lets make it such that agents can steal from each other").  False, the rule of
     # before: nobody is made to let go of what it holds.
     steal: bool = False
+    # Which robots may take (with ``steal``; 2026-11-05): (agent_1, agent_2).  (True, False):
+    # the first robot -- a hinderer, say -- may take what its partner holds, the second may
+    # not: its object, once taken, comes back only if the first lets it go.  Folders
+    # ..._steal<R0|R1> where not both.
+    steal_robots: tuple = (True, True)
     # a robot whose goal is done still has its hand actions
     done_robots_handle: bool = True
     # Reward of a robot's goal while ITS OWN hands hold an object that is not its own.
@@ -621,6 +640,69 @@ class Config:
     feint_lure: bool = True
     feint_lag: float = 1.0
     feint_wait: int = 3
+    # What a robot's own reward pays for (2026-11-05; the user, of the answer to "why does
+    # the coercer never feint": "Could you please implement this?" -- "reward the coercer for
+    # its real task").  Table I's column l > 1 nests the partner's reward R~_j, and R~_j holds
+    # the PARTNER'S ESTIMATE of the robot's goal reward, r~(g_i) = sum_g b_j(g) r_i(s'; g)
+    # under the partner's belief about the robot: against a goal-less hinderer a coercer
+    # earns R_i = (1 + w_i) r(g_i) + w_i w_j r~(g_i) - c(a_i), paid for looking as if it got on
+    # with some goal, whatever it achieves.  objective="table" (the default): that, Table I
+    # as printed.  "task": the estimate inside R~_j replaced by the robot's true goal reward,
+    # r~(g_i) -> r(g_i) -- against a goal-less hinderer R_i = (1 + w_i + w_i w_j) r(g_i) -
+    # c(a_i), 3 r(g_i) - c at unit weights, the same as "table" wherever the partner is sure of
+    # the robot's goal.  Only the robot's own reward changes: its partner's models of it and
+    # every belief are as before (the partner still acts on what it believes).  "complete"
+    # (with belief_planning only; beliefplan.py): a one-time bonus for the goal actually done,
+    # R_i = B 1[done_i(s') and not done_i(s)] - c(a_i), B = completion_bonus (None: the value
+    # of a finished goal under the shaped reward, ObjectWorld.vdone).  For the robots whose
+    # social goal is one of objective_goals.  Folders ..._objtask / ..._objcomplete.
+    objective: str = "table"
+    objective_goals: tuple = ("coercion",)
+    completion_bonus: Optional[float] = None
+    # Planning over the partner's belief (2026-11-05; the same request: "simulate how each
+    # candidate action changes the other agent's beliefs and subsequent actions";
+    # social_pairings/beliefplan.py).  A level-2 robot whose social goal is one of
+    # belief_planning_goals chooses its action by
+    #     Q(s, m, u, a_i) = R(s, a_i, a_j) + gamma V(s', F(m; s, a_i, a_j, s'), u'),
+    #     a_j = the partner's own choice at (s, m, u),   V = max over a_i of Q,
+    # m the partner's belief about the robot (its physical and social posteriors and its idle
+    # mode, Eqs. 5-6), F the partner's OWN update of it (SocialMDP.updated_belief's rule,
+    # computed over all states at once and checked against it), u what would undo the
+    # partner's last action (its inertia).  The partner chooses with m before it sees the
+    # robot's simultaneous action, and updates after.  It is predicted by its own model
+    # re-solved at m, greedy, with its inertia: the robot knows the partner's type (an oracle,
+    # said so in the record) and reconstructs its belief from the history both see.  m ranges
+    # over at most belief_points beliefs -- the partner's belief now, those it would form if
+    # the robot acted by any of the hypotheses the partner holds about it, and those along
+    # the planned way (belief_refinements rounds), a new one where a belief lies farther than
+    # belief_spacing from all the others (sqrt-coordinates: Hellinger) -- the value between
+    # them interpolated (belief_interpolation: "segment", convex weights on two of them;
+    # "nearest").  belief_horizon transitions of that, then the value with the partner's
+    # belief held where it is (belief_tail="frozen"; "cap": nothing after the rollout's step
+    # cap where that comes first).  No reward for deceiving (kappa = 0).  "off" (the
+    # default): the planner of Eq. 4.  "updated": the above.  "frozen": the same planner
+    # with the partner's belief held as it is now -- the comparison that isolates the
+    # belief's dynamics.  Needs action_selection="argmax" and no decoy_feint; "updated" also
+    # physical_likelihood="level1", no belief_window and the partner at level 2.  Folders
+    # ..._bplan<frozen|updated>.
+    belief_planning: str = "off"
+    belief_planning_goals: tuple = ("coercion",)
+    belief_horizon: int = 40
+    belief_points: int = 40
+    belief_spacing: float = 0.1
+    belief_refinements: int = 2
+    belief_interpolation: str = "segment"
+    belief_tail: str = "frozen"
+    # From which transition (0-based) the robot plans so (2026-11-05): before it, the planner
+    # of Eq. 4 -- the history the robot finds itself in, e.g. its object held by a hinderer
+    # since transition 8 or so ("the first 20 transitions as before").  Folders _bfrom<n>.
+    belief_planning_from: int = 0
+    # The first transitions' joint actions, forced (2026-11-05; "the first 20 transitions as
+    # before"): a history to start from -- e.g. the first 20 transitions of a rollout in which
+    # the hinderer took the coercer's object -- the robots watching it and updating their
+    # beliefs by the options of THIS rollout (a goal hazard, say).  ((agent_1's action,
+    # agent_2's), ...); () none.  Folders _forced<n>.
+    forced_actions: tuple = ()
     # Everything the belief update computes, in the record (2026-11-04; the user: "just have
     # it put all diagnostics into the json file. All information for belief calculation
     # should be in the JSOn", and "Lets also add these to logs: Q_{d,xi}(s_t, a_t),
@@ -853,6 +935,55 @@ class Config:
         if (isinstance(self.feint_wait, (bool, np.bool_))
                 or not isinstance(self.feint_wait, (int, np.integer)) or self.feint_wait < 0):
             raise ValueError("feint_wait must be an int >= 0")
+        pair = self.steal_robots
+        if isinstance(pair, (str, bytes)) or not hasattr(pair, "__len__") or len(pair) != 2:
+            raise ValueError("steal_robots must be (agent_1 may take, agent_2 may take)")
+        object.__setattr__(self, "steal_robots", tuple(bool(x) for x in pair))
+        # ---- the objective and planning over the partner's belief (2026-11-05) --------------
+        _one_of(self, "objective", ("table", "task", "complete"))
+        _one_of(self, "belief_planning", ("off", "frozen", "updated"))
+        _one_of(self, "belief_interpolation", ("segment", "nearest"))
+        _one_of(self, "belief_tail", ("frozen", "cap"))
+        for name in ("objective_goals", "belief_planning_goals"):
+            goals = getattr(self, name)
+            if isinstance(goals, str):
+                raise ValueError(f"{name} must be a tuple of social goals, e.g. ('coercion',)")
+            object.__setattr__(self, name, tuple(goals))
+            for goal in goals:
+                parse_goal(goal)                 # raises on an unknown goal
+        if self.completion_bonus is not None and not (
+                np.isfinite(self.completion_bonus) and self.completion_bonus > 0.0):
+            raise ValueError("completion_bonus must be None or a finite number > 0")
+        if self.objective == "complete" and self.belief_planning == "off":
+            raise ValueError('objective="complete" is the belief planner\'s (beliefplan.py): '
+                             'set belief_planning to "frozen" or "updated"')
+        for name, low in (("belief_horizon", 1), ("belief_points", 1),
+                          ("belief_refinements", 0), ("belief_planning_from", 0)):
+            value = getattr(self, name)
+            if (isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer))
+                    or value < low):
+                raise ValueError(f"{name} must be an int >= {low}")
+        forced = tuple(tuple(int(a) for a in pair) for pair in self.forced_actions)
+        if any(len(pair) != 2 or min(pair) < 0 or max(pair) > 9 for pair in forced):
+            raise ValueError("forced_actions: ((agent_1's action, agent_2's), ...), each 0..9")
+        object.__setattr__(self, "forced_actions", forced)
+        if not (np.isfinite(self.belief_spacing) and self.belief_spacing > 0.0):
+            raise ValueError("belief_spacing must be a number > 0")
+        if self.belief_planning != "off":
+            if self.action_selection != "argmax":
+                raise ValueError("belief_planning chooses by its Q: action_selection must be "
+                                 "\"argmax\"")
+            if self.decoy_feint:
+                raise ValueError("belief_planning and decoy_feint are two answers to one "
+                                 "question: choose one")
+        if self.belief_planning == "updated":
+            if self.physical_likelihood != "level1":
+                raise ValueError('belief_planning="updated" re-computes the partner\'s update '
+                                 'over every state for physical_likelihood="level1" (Eq. 6 as '
+                                 'printed; not yet "level0" or "cut")')
+            if self.belief_window > 0:
+                raise ValueError('belief_planning="updated" does not yet carry the evidence '
+                                 'window in its state (belief_window must be 0)')
         for name in ("park_eps", "idle_eps"):
             if not 0.0 <= getattr(self, name) < 1.0:
                 raise ValueError(f"{name} must lie in [0, 1)")

@@ -148,6 +148,9 @@ class ObjectWorld:
         # (Config.swap_on_place) the places of the objects, where a swap leaves one --------
         self.swap_on_place = bool(cfg.swap_on_place)
         self.steal = bool(cfg.steal)
+        # which robots may take (Config.steal_robots, 2026-11-05): bit i, robot i
+        self.steal_mask = int(sum(1 << i for i in (0, 1)
+                                  if self.steal and cfg.steal_robots[i]))
         self.lie_cells = hand + (cells if self.swap_on_place else ())
         self.L = len(self.lie_cells)
         self.lie = np.array([grid.cell_id[c] for c in self.lie_cells], dtype=np.int64)   # (L,)
@@ -504,7 +507,8 @@ class ObjectWorld:
                    self.home_site, np.array(gs, dtype=np.int64),
                    np.array([gs[1], gs[0]], dtype=np.int64), self.iscand, own, own, own,
                    self.rights, self.forced_swap, np.array([True, True]), self.after_done,
-                   self.lie_site, self.hand_at, self.hand_over, self.swap_on_place, self.steal,
+                   self.lie_site, self.hand_at, self.hand_over, self.swap_on_place,
+                   self.steal_mask,
                    self.place_at, self.auto, self.lift0, self.nstage)
         self.block0 = int(self.code2blk[encode(st, dn0, self.pw)])
         self.initial = (int(self.start[0]), int(self.start[1]), self.block0)
@@ -530,7 +534,8 @@ class ObjectWorld:
                         np.array(key[2], dtype=np.int64), np.array(key[4], dtype=np.int64),
                         np.array(key[5], dtype=np.int64), self.rights, self.forced_swap,
                         use, self.after_done, self.lie_site, self.hand_at, self.hand_over,
-                        self.swap_on_place, self.steal, self.place_at, self.auto, self.lift0,
+                        self.swap_on_place, self.steal_mask, self.place_at, self.auto,
+                        self.lift0,
                         self.nstage, out)
             check((out >= 0).all(), "a transition leaves the enumerated configurations")
             self._tabs[key] = out
@@ -656,7 +661,8 @@ class ObjectWorld:
                             else:
                                 if lying.any():
                                     ok |= bit[PICK]
-                                if self.steal and adj and m >= 0 and may[i, m]:
+                                if ((self.steal_mask >> i) & 1 and adj and m >= 0
+                                        and may[i, m]):
                                     ok |= bit[TAKE]  # what the partner next to it holds
                             out[i, b, s * 2 + adj] = ok
             self._handok[social] = out
@@ -774,7 +780,7 @@ class ObjectWorld:
         own = np.array([0, 1], dtype=np.int64)
         use = np.array([True, True])
 
-        def run(dsite, acc=(0, 1), steal=self.steal):
+        def run(dsite, acc=(0, 1), steal=self.steal_mask):
             st = np.array(status, dtype=np.int64)
             dn = np.array(done, dtype=np.int64)
             hands_step(st, dn, site, how, adj, self.home_site, gs,
@@ -797,8 +803,8 @@ class ObjectWorld:
             handed.append(taken != real and taken[1] == real[1])
         if detail:
             took = [False, False]
-            if self.steal:                       # what the hands would have held without it
-                kept = run((gs[1], gs[0]), steal=False)[0]
+            if self.steal_mask:                  # what the hands would have held without it
+                kept = run((gs[1], gs[0]), steal=0)[0]
                 for k, (a, b) in enumerate(zip(kept, real[0])):
                     if a in (HELD0, HELD1) and b in (HELD0, HELD1) and a != b:
                         took[b - 1] = True
